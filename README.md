@@ -88,8 +88,18 @@ repeat them.
 
 ## Setup
 
-Requires Python 3.10+. No third-party packages for indexing and search. The MCP
-server modes (`mcp`, `http`) additionally need `mcp` installed.
+### Prerequisites
+
+| for | you need |
+|---|---|
+| indexing and searching from the CLI | Python 3.10+, standard library only |
+| the MCP server modes (`mcp`, `http`) | `pip install mcp` |
+| packing a Desktop extension *(optional)* | Node.js, for the `mcpb` CLI |
+
+Only the first row is mandatory. Nothing about indexing or searching needs a
+third-party package; `mcp` is required solely to serve the index to Claude, and
+Node solely to package that server as a Desktop extension. There is a route that
+skips Node entirely - see [Installing it in Claude Desktop](#installing-it-in-claude-desktop).
 
 ```bash
 git clone https://github.com/<you>/claude-kb
@@ -224,24 +234,117 @@ unnoticed for eleven days precisely this way.
 
 ## MCP extension
 
-The repo holds **one** `claude_kb.py`, at the root. `.mcpb` requires the entry
-point to live inside the bundle, so the extension directory is *generated*
-rather than checked in:
+**No prebuilt `.mcpb` ships with this repo, and none can.** Do not go looking for
+a release artifact - there isn't one, and its absence is not an oversight. An
+MCP extension manifest has to carry *literal absolute paths*: your Python
+interpreter, your KB root. A bundle is therefore specific to the machine that
+built it, and a checked-in one would be wrong for every reader. You build your
+own, and it is one command.
+
+### From clone to searchable in Claude
+
+The whole path, start to finish. Steps 1-4 are covered under
+[Setup](#setup); 5-6 are below; 7 is optional ergonomics.
+
+1. `git clone` this repo and `cd` into it.
+2. `cp config.example.json config.json`, then set `root` to your KB working
+   directory.
+3. `pip install mcp` - needed to serve the index, not to build it.
+4. Index an export: `python claude_kb.py update <export-dir|zip>`. Confirm with
+   `python claude_kb.py search "some term"`.
+5. `python build_extension.py` - generates `kb-extension/build/`.
+6. Install that in Claude Desktop, by one of the two routes below.
+7. *Optional:* install the `claude/` templates for ingest and search ergonomics -
+   see [Claude Code integration](#claude-code-integration).
+
+After step 6, restart Desktop and ask it something that should hit your history.
+If `kb_search` does not appear in a fresh session, the extension is not loaded.
+
+### What the build step produces
 
 ```bash
 python build_extension.py            # writes kb-extension/build/
 python build_extension.py --print    # show resolved values, write nothing
 ```
 
-That produces `kb-extension/build/` containing `manifest.json` - rendered from
-`manifest.example.json` with your resolved config substituted in - plus copies
-of `claude_kb.py` and `kb_config.py`. Load that directory in Claude Desktop, or
-pack it with `mcpb pack kb-extension/build`.
+`kb-extension/build/` contains `manifest.json` - rendered from
+`manifest.example.json` with your resolved config substituted in - plus copies of
+`claude_kb.py` and `kb_config.py`.
 
 Generating the manifest rather than shipping placeholders is deliberate: a
 second checked-in copy of `claude_kb.py` is exactly what drifted before, sitting
 six weeks behind the root module, and hand-edited placeholders are a step people
 get wrong.
+
+### Installing it in Claude Desktop
+
+Two routes. **Route A** produces a single installable file and needs Node.
+**Route B** needs nothing beyond what you already have. Both end with the same
+server running; pick on whether Node is available to you.
+
+Desktop's interface changes between releases, so the shape of each flow is
+described rather than a menu path that will go stale.
+
+#### Route A: pack a `.mcpb` (needs Node)
+
+The packer is `@anthropic-ai/mcpb`, distributed on npm, so Node.js is a
+prerequisite for this route only:
+
+```bash
+npm install -g @anthropic-ai/mcpb
+mcpb pack kb-extension/build claude-kb.mcpb
+```
+
+It validates the manifest against the schema before writing, so a malformed
+manifest fails here rather than silently inside Desktop.
+
+To install the resulting file: Desktop treats a `.mcpb` as an installable
+artifact, so opening the file directly hands it to Desktop, which will ask you to
+confirm. The same thing is reachable from Desktop's settings, in the area that
+manages extensions, which offers installing one from a local file. Either way,
+**restart Desktop afterward** and confirm `kb_search` exists in a fresh session.
+
+If you are replacing an earlier build, remove the old extension first rather than
+installing over it - two copies of the same server registering the same tool
+names is ambiguous, and you will not be able to tell which one answered.
+
+#### Route B: no Node, or npm blocked by policy
+
+You do not need `mcpb` at all. The generated `manifest.json` already contains
+exactly the launch configuration Desktop needs, so you can register the server
+directly in `claude_desktop_config.json` instead:
+
+```json
+{
+  "mcpServers": {
+    "claude-kb": {
+      "command": "<the command from your generated manifest.json>",
+      "args": ["<path-to>/kb-extension/build/claude_kb.py", "mcp"],
+      "env": { "CLAUDE_KB_ROOT": "<your KB root>" }
+    }
+  }
+}
+```
+
+Copy the three values straight out of `kb-extension/build/manifest.json` -
+`server.mcp_config.command`, `args`, and `env` - replacing the `${__dirname}`
+placeholder in `args` with the real path to `kb-extension/build/`. Restart
+Desktop.
+
+**What a blocked npm looks like,** so you can recognise it as an environment
+problem rather than a KB one:
+
+- `npm install -g @anthropic-ai/mcpb` fails with `EACCES`, `403`, `ETIMEDOUT`,
+  `ECONNREFUSED`, or `request to https://registry.npmjs.org/... failed` - a
+  proxy, an offline machine, or a policy blocking the public registry.
+- An internal mirror returns `404 Not Found` for the scoped package because it
+  does not mirror `@anthropic-ai`.
+- The install reports success but `mcpb: command not found` - the npm global bin
+  directory is not on your `PATH`.
+
+None of these are failures of the index. Indexing, CLI search, and the MCP server
+itself are all unaffected; only the packaging convenience is unavailable. Take
+Route B.
 
 **Manual fallback.** If you would rather not run the build step, copy
 `kb-extension/manifest.example.json` to `kb-extension/build/manifest.json`,
@@ -272,9 +375,10 @@ Both open the index **read-only**; the server cannot modify your database.
 ## Claude Code integration
 
 **Optional.** Everything above works standalone from a terminal. This section
-only adds ergonomics: a `/kb-update` slash command, and natural-language
-triggers so "update the KB" routes to the right workflow instead of Code
-improvising one.
+adds ergonomics in both directions: getting data *in* (a `/kb-update` slash
+command and natural-language triggers, so "update the KB" routes to the right
+workflow instead of Code improvising one) and getting it *out* (Claude
+consulting your indexed history on its own when you ask about your past work).
 
 Two template files live in `claude/`. Both need placeholders filled in; neither
 is used by the scripts themselves.
@@ -301,11 +405,13 @@ directory.
 
 ### 2. The natural-language routing
 
-The slash command alone gives you `/kb-update`. To make plain phrasings work,
-append the block in `claude/CLAUDE.snippet.md` to your own `~/.claude/CLAUDE.md`
-and fill in its two paths. That block carries the trigger phrases, the
-instruction to read the command file rather than act on a remembered summary,
-the run-from-the-current-directory rule, and the prohibition on writing an HTTP
+`claude/CLAUDE.snippet.md` holds two independent blocks to append to your own
+`~/.claude/CLAUDE.md`. Take either or both, and fill in the two paths.
+
+**Block 1 - ingest.** The slash command alone gives you `/kb-update`; this makes
+plain phrasings work too. It carries the trigger phrases, the instruction to read
+the command file rather than act on a remembered summary, the
+run-from-the-current-directory rule, and the prohibition on writing an HTTP
 downloader for export URLs.
 
 That last one has to live in `CLAUDE.md` rather than only in the command file,
@@ -313,7 +419,30 @@ because it needs to be visible *before* Code opens the command file. A session
 that has already decided to improvise a downloader is not going to read the
 instructions first.
 
-Without the snippet, the slash command still works; you just have to type it.
+Without this block, the slash command still works; you just have to type it.
+
+**Block 2 - search.** This is the half that makes the index worth having in
+conversation. It tells Claude to consult the KB *unprompted* when you refer to
+your own past work - what you decided, why something is built the way it is, an
+error you say you have hit before - rather than answering from a cold guess. It
+also covers following a hit through with `kb_get_conversation`, because a search
+snippet is a fragment and the turns around it often qualify it.
+
+Search guidance belongs in `CLAUDE.md` for the same structural reason as the HTTP
+prohibition: the decision to search is the thing being guided, so the instruction
+has to be resident *before* that decision, not fetched after it. A file Claude
+only opens once it has already decided to search is too late to be useful.
+
+The block is explicitly conditional on `kb_search` being present in the tool
+list. Installing the extension and appending this snippet are separate steps, and
+either can be skipped - without the guard, doing one but not the other leaves
+Claude instructed to call a tool that does not exist. When it is absent, the
+correct behaviour is to say the KB is not connected, not to improvise a search or
+imply one happened.
+
+It also sets expectations about output: these are your own private chats, so the
+block asks for a summary, a date, and a pointer rather than long verbatim
+excerpts or an exhaustive list of every hit.
 
 ---
 
