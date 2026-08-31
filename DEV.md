@@ -437,6 +437,29 @@ fake DOM and a stubbed `chrome.*`. The suite is itself verified against a
 deliberately broken copy - a test that passes on both the broken and the fixed
 code proves nothing.
 
+## Date provenance
+
+A message's `created_at` comes from the conversation, never from when it was
+indexed. `_conv_messages` reads `m.get("created_at")` and both ingest paths -
+official export and web capture - go through it, so the two cannot disagree.
+
+The envelope's `captured_at` is metadata about the CAPTURE and deliberately
+never touches a message. Keeping them separate is what lets a conversation
+captured today keep its months-old dates, which is the whole basis of date
+ranking and of any "what was I working on in July" question.
+
+`test_dates.py` pins this end to end: capture-core builds an envelope whose
+messages are months old while `captured_at` is now, the real host ingests it,
+and the assertions are that every stored date equals the source date, that none
+equals `captured_at`, that none is today, that they are not collapsed onto one
+value, that none is empty, and that the official export path stores identical
+dates for the same conversation.
+
+That assertion class was missing. Nothing compared a stored date against the
+date its source claimed, so a reader that dropped `created_at` or substituted
+`now()` would have passed every other suite. Verified against a reader broken to
+do exactly that: the assertions fail, as they must.
+
 ## Two rules for tests here
 
 Both were paid for. Neither is a style preference.
