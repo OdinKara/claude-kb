@@ -484,6 +484,19 @@ raising - `_read_web_export` returning `None`, `_reject`, the host answering
 caller receives, not the absence of a crash. A component that is good at not
 crashing is very good at failing quietly.
 
+### A wrong stub reports correct code as broken
+
+The batch suite's fake DOM treated `textContent = ""` as an inert property, while
+a real DOM replaces the node's contents. Every redraw therefore appended rows
+instead of clearing them, and seven assertions failed against code that was
+correct.
+
+When a test fails, **the stub is as much a suspect as the thing under test**.
+The give-away here was counts growing by exactly the list length - 60 rows
+becoming 120, 35 selected reading as 70. Fidelity matters most in whatever the
+code under test uses to reset state, because that is where an inert stub quietly
+turns "replace" into "append".
+
 ### Verify a new test against a deliberately broken copy
 
 **A test that passes on both the broken and the fixed code proves nothing**, and
@@ -539,6 +552,29 @@ latency-critical - a run is something you start and walk away from. So:
 `LIST_PAGE_DELAY_MS`, `CAPTURE_DELAY_MS`, a per-run cap
 (`CAPTURE_MAX_PER_RUN`), and a list cap (`LIST_MAX_ITEMS`) that also stops a
 changed pagination contract from spinning forever.
+
+**The cap is a batch boundary in the UI, not just in the code.** After a capped
+run the deferred conversations stay selected, the list is relabelled against what
+is now indexed, and the button names the next batch. That is why
+`captureMany` returns the deferred uuids rather than a count: a count can only be
+described, a list can be re-selected.
+
+The first attempt at this fixed only the wording, and the wording it produced -
+"run it again to capture the next 25" - was true of the code and false of the
+button, because the selection was consumed by the run. Confidently wrong beats
+uninformative only in the wrong direction: someone follows it, nothing happens,
+and they conclude the feature is broken. **The workflow was the defect.**
+
+Relabelling after a batch calls the host's read-only `indexed` rather than
+re-listing conversations - the labels are a local display and re-paging claude.ai
+to refresh them would spend requests against the very endpoints the pacing
+exists to protect. It also keeps `select new` honest mid-sequence: without it,
+the 25 just captured still read `new` and would be handed straight back.
+
+The pending set is mirrored into session storage so closing the popup does not
+lose the thread. Only the uuids are kept, never the list itself: a few thousand
+rows do not belong in session storage, the list reloads cheaply, and the
+selection is the part that cannot be reconstructed.
 
 **A run always accounts for every conversation selected.** Captured ones carry
 the host's per-file disposition; ones that failed carry their reason; and after

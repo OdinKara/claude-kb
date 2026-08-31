@@ -665,6 +665,15 @@ second between list pages, and a cap of 25 conversations per run. These are
 internal endpoints and a tight bulk loop is the behaviour most likely to be
 throttled, so the run is slow by design - start it and come back.
 
+**Selecting more than the cap is normal.** The button says what it will do -
+*Capture next 25 of 156* - and when the batch finishes the remaining 131 are
+**still selected**, the labels update so the ones just captured now read
+*indexed*, and the button becomes *Capture next 25 of 131*. Press it again to
+continue. There is no reloading or reselecting between batches.
+
+If you close the popup mid-sequence, the pending conversations are remembered:
+reopen it, click **Load chat list**, and they are reselected for you.
+
 **Every selected conversation gets an outcome**, listed individually. If the run
 stops early - an authentication failure, say - the ones after that point are
 marked *not attempted* rather than silently dropped, and whatever was captured

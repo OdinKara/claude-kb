@@ -84,6 +84,25 @@ async function rememberRun(report) {
   }
 }
 
+/* What the cap deferred, so closing the popup mid-sequence does not lose the
+ * thread of a multi-batch run. Only the uuids are kept, not the list itself: a
+ * few thousand list rows is not something to push into session storage, and the
+ * list can be reloaded cheaply while the selection cannot be reconstructed. */
+async function rememberPending(uuids) {
+  try {
+    if (uuids && uuids.length) {
+      await chrome.storage.session.set({
+        pending: uuids,
+        pendingAt: new Date().toISOString(),
+      });
+    } else {
+      await chrome.storage.session.remove(["pending", "pendingAt"]);
+    }
+  } catch (_e) {
+    /* as above */
+  }
+}
+
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (!msg || typeof msg !== "object") return false;
 
@@ -94,9 +113,32 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
   if (msg.type === "last_run") {
     chrome.storage.session
-      .get("lastRun")
-      .then((v) => sendResponse((v && v.lastRun) || null))
-      .catch(() => sendResponse(null));
+      .get(["lastRun", "pending"])
+      .then((v) =>
+        sendResponse({ lastRun: (v && v.lastRun) || null,
+                       pending: (v && v.pending) || [] })
+      )
+      .catch(() => sendResponse({ lastRun: null, pending: [] }));
+    return true;
+  }
+
+  // Re-read what is indexed WITHOUT re-listing conversations. After a batch the
+  // labels are stale - the 25 just captured now read "new" - and re-paging
+  // claude.ai to fix a local display is the wrong trade against endpoints this
+  // deliberately paces.
+  if (msg.type === "refresh_indexed") {
+    sendNative({ type: "indexed" }).then((idx) =>
+      sendResponse({
+        ok: !!(idx && idx.ok),
+        indexed: (idx && idx.ok && idx.indexed) || {},
+        count: (idx && idx.ok && idx.count) || 0,
+      })
+    );
+    return true;
+  }
+
+  if (msg.type === "clear_pending") {
+    rememberPending([]).then(() => sendResponse({ ok: true }));
     return true;
   }
 
@@ -226,19 +268,27 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         });
       }
 
-      const capped = (run.failed || []).filter((f) => f.kind === "capped").length;
+      // The conversations the cap deferred, as uuids rather than as a count.
+      // A count can only be described; a list can be re-selected, which is what
+      // turns "run it again" from an instruction into a button.
+      const remaining = (run.failed || [])
+        .filter((f) => f.kind === "capped")
+        .map((f) => f.uuid);
+
       const report = Object.assign({}, reply, {
         perConversation,
         selected: uuids.length,
         capturedCount: run.captured.length,
         // failedCount excludes the capped ones: they are not failures, and
         // counting them as such is what made a working run look broken.
-        failedCount: (run.failed || []).length - capped,
-        cappedCount: capped,
+        failedCount: (run.failed || []).length - remaining.length,
+        cappedCount: remaining.length,
+        remaining,
         stoppedBy: run.stoppedBy || null,
         limit: run.limit,
       });
       await rememberRun(report);
+      await rememberPending(remaining);
       sendResponse(report);
     })();
     return true;
