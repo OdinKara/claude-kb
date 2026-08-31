@@ -268,6 +268,44 @@ def _insert_conv(conn, c):
     return len(msgs)
 
 
+def _should_replace(stored, incoming, authoritative):
+    """Decide what to do with a conversation that is already indexed.
+
+    Returns "replace", "skip", or "partial".
+
+    `stored` and `incoming` are both (updated_at, content_hash, msg_count).
+
+    The official export is authoritative: it is a complete snapshot, so it may
+    legitimately shrink a conversation (you deleted messages) and is always
+    allowed to replace.
+
+    Any other writer - a live browser capture, say - is not. A capture of an
+    ongoing chat holds FEWER messages than a later export of the same chat, and
+    the plain hash comparison cannot tell "this is newer" from "this is a
+    partial view": both simply hash differently. Replacing on hash alone would
+    delete the fuller version and reinstate the shorter one, silently, while
+    reporting success. So a non-authoritative writer may only replace when it
+    brings at least as many messages as are already indexed.
+
+    msg_count must be computed by the SAME normalizer on both sides
+    (_conv_messages), not from a raw array length. The export drops messages
+    that are neither human nor assistant, and messages whose content flattens
+    to nothing; a count that skips that filter is not comparable to a stored
+    one, and the guard degrades into a coin flip.
+    """
+    st_upd, st_hash, st_count = stored
+    in_upd, in_hash, in_count = incoming
+
+    unchanged = in_hash == st_hash and not (in_upd and st_upd and in_upd > st_upd)
+    if unchanged:
+        return "skip"
+    if authoritative:
+        return "replace"
+    if in_count is None or st_count is None:
+        return "partial"          # cannot prove it is not a shrink; refuse
+    return "replace" if in_count >= st_count else "partial"
+
+
 def _insert_projdoc(conn, puuid, pname, filename, content, created):
     """Insert a project doc's row + tracking."""
     conn.execute(
@@ -352,7 +390,47 @@ def build():
 
 
 # ── update (incremental upsert; never wipes) ─────────────────────────────────
-def update(export_path):
+def upsert_conversations(conn, conversations, authoritative):
+    """Upsert conversations into an open connection.
+
+    `authoritative` says whether this writer is allowed to shrink a
+    conversation - see _should_replace. Returns (new, updated, skipped,
+    partial).
+    """
+    c_new = c_upd = c_skip = c_part = 0
+    for c in conversations:
+        msgs = _conv_messages(c)
+        if not msgs:
+            continue
+        uuid = c.get("uuid") or ""
+        incoming = (c.get("updated_at") or "",
+                    _hash_texts([t for t, _, _ in msgs]),
+                    len(msgs))
+        row = conn.execute(
+            "SELECT updated_at, content_hash, msg_count FROM indexed_convs"
+            " WHERE conversation_uuid=?", (uuid,)).fetchone()
+        if row is None:                                       # NEW
+            _insert_conv(conn, c)
+            c_new += 1
+            continue
+        action = _should_replace(row, incoming, authoritative)
+        if action == "replace":
+            conn.execute(
+                "DELETE FROM docs WHERE conversation_uuid=? AND source='chat'", (uuid,))
+            _insert_conv(conn, c)                             # UPDATED
+            c_upd += 1
+        elif action == "partial":
+            # Fewer messages than are already indexed, from a writer that is
+            # not a complete snapshot. Leave the fuller version alone.
+            print(f"  PARTIAL {uuid}: {incoming[2]} messages vs {row[2]} indexed"
+                  f" - keeping the indexed version")
+            c_part += 1
+        else:
+            c_skip += 1                                       # SKIP (unchanged)
+    return c_new, c_upd, c_skip, c_part
+
+
+def update(export_path, authoritative=True):
     conv_json, projdir, dchats, tmp = _resolve_export(export_path)
     try:
         conn = sqlite3.connect(DB)
@@ -360,30 +438,8 @@ def update(export_path):
         _ensure_schema(conn)
         _backfill_tracking(conn)  # safe no-op once tracking exists
 
-        c_new = c_upd = c_skip = 0
-        for c in _iter_conversations(conv_json, dchats):
-            msgs = _conv_messages(c)
-            if not msgs:
-                continue
-            uuid = c.get("uuid") or ""
-            ex_hash = _hash_texts([t for t, _, _ in msgs])
-            ex_upd = c.get("updated_at") or ""
-            row = conn.execute(
-                "SELECT updated_at, content_hash FROM indexed_convs WHERE conversation_uuid=?",
-                (uuid,)).fetchone()
-            if row is None:                                   # NEW
-                _insert_conv(conn, c)
-                c_new += 1
-            else:
-                st_upd, st_hash = row
-                # changed if content differs OR the export says it's newer
-                if ex_hash != st_hash or (ex_upd and st_upd and ex_upd > st_upd):
-                    conn.execute(
-                        "DELETE FROM docs WHERE conversation_uuid=? AND source='chat'", (uuid,))
-                    _insert_conv(conn, c)                     # UPDATED
-                    c_upd += 1
-                else:
-                    c_skip += 1                               # SKIP (unchanged)
+        c_new, c_upd, c_skip, c_part = upsert_conversations(
+            conn, _iter_conversations(conv_json, dchats), authoritative)
 
         d_new = d_upd = d_skip = 0
         for puuid, pname, filename, content, created in _iter_project_docs(projdir):
@@ -411,14 +467,16 @@ def update(export_path):
         size = os.path.getsize(DB)
         print("\n=== UPDATE COMPLETE (upsert; nothing wiped) ===")
         print(f"  source           : {export_path}")
-        print(f"  chats   NEW={c_new}  UPDATED={c_upd}  SKIPPED={c_skip}")
+        print(f"  chats   NEW={c_new}  UPDATED={c_upd}  SKIPPED={c_skip}"
+              f"  PARTIAL={c_part}")
         print(f"  docs    NEW={d_new}  UPDATED={d_upd}  SKIPPED={d_skip}")
         print(f"  total rows        : {total}")
         print(f"  DB size          : {size:,} bytes ({size/1024/1024:.2f} MB)")
         print(f"  DB.gz            : {os.path.getsize(gz):,} bytes")
-        # machine-readable last line for the ingest runner:
+        # machine-readable last line for the ingest runner. The SUMMARY prefix
+        # is what kb_ingest.py matches on; fields may be appended safely.
         print(f"SUMMARY NEW={c_new + d_new} UPDATED={c_upd + d_upd} "
-              f"SKIPPED={c_skip + d_skip} ROWS={total}")
+              f"SKIPPED={c_skip + d_skip} PARTIAL={c_part} ROWS={total}")
     finally:
         if tmp:
             tmp.cleanup()
