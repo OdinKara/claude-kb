@@ -258,26 +258,29 @@ def confirm_ingest(pre_count):
     parts had downloaded, the one-time URLs were spent, and the message pointed
     at the wrong problem.
     """
-    say("Running ingest...")
+    # Announced only once the trigger has actually worked: with no task, the
+    # next thing printed is "Download complete", and "Running ingest..." above
+    # it would be describing something that did not happen.
     r = subprocess.run(["schtasks", "/run", "/tn", TASK_NAME],
                        capture_output=True, text=True)
     if r.returncode != 0:
-        detail = ((r.stdout or "") + (r.stderr or "")).strip().splitlines()
-        detail = detail[-1].strip() if detail else "no output"
-        print("COULD NOT TRIGGER THE INGEST TASK %r: %s" % (TASK_NAME, detail))
+        # The scheduled task is OPTIONAL. Most setups do not have one, and that
+        # is a normal state rather than something the user failed to do - so
+        # this reads as "here is the one command that finishes the job", not as
+        # a fault report. The download is the expensive, irreversible half and
+        # it has already succeeded.
+        py = kb_config.get("python") or "python"
+        print("Download complete. Finish the ingest with:")
         print("")
-        print("  The downloaded parts are SAFE in %s" % INCOMING)
-        print("  and nothing has been lost - only the ingest did not start.")
+        print("      %s kb_ingest.py" % py)
         print("")
-        print("  If the task has never been created (the usual cause on a new")
-        print("  install), create it once:")
-        print("      powershell -NoProfile -ExecutionPolicy Bypass \\")
-        print("          -File install-task.ps1 -ScriptsDir \"<this directory>\"")
-        print("")
-        print("  Or ingest right now without it:")
-        print("      %s kb_ingest.py" % (kb_config.get("python") or "python"))
+        print("  The parts are in %s and nothing is lost." % INCOMING)
+        print("  (No scheduled task named %r to trigger - that task is an" % TASK_NAME)
+        print("   optional convenience, see install-task.ps1. Skipping it just")
+        print("   means running the line above yourself.)")
         return 1
 
+    say("Running ingest...")
     deadline = time.time() + INGEST_TIMEOUT
     while time.time() < deadline:
         cur = log_lines()

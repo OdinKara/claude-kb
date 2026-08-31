@@ -155,6 +155,7 @@ const countsEl = document.getElementById("counts");
 const btnLoad = document.getElementById("load");
 const btnCapSel = document.getElementById("capsel");
 const btnCapSelSave = document.getElementById("capselsave");
+const capNote = document.getElementById("capnote");
 
 let rows = [];
 
@@ -171,6 +172,18 @@ function refreshSelection() {
   btnCapSelSave.disabled = n === 0;
   btnCapSel.textContent = n ? `Capture + Ingest (${n})` : "Capture + Ingest";
   btnCapSelSave.textContent = n ? `Capture only (${n})` : "Capture only";
+
+  // Say the cap applies BEFORE the run, not after it. Selecting 156 and being
+  // told afterwards that 131 "were not captured" is a bad way to learn a limit
+  // exists.
+  if (n > CAPTURE_MAX_PER_RUN) {
+    capNote.textContent =
+      `${n} selected - this run will capture the first ${CAPTURE_MAX_PER_RUN}. ` +
+      `Run it again for the next batch.`;
+    capNote.classList.remove("hidden");
+  } else {
+    capNote.classList.add("hidden");
+  }
 }
 
 function renderList(annotated, note) {
@@ -257,22 +270,45 @@ function showRun(report) {
   const skp = (report.skipped || []).length;
   const rej = (report.rejected || []).length;
   const saved = (report.written || []).length;
+  const capped = report.cappedCount || 0;
   const notCaptured = report.failedCount || 0;
 
-  const cls = rej || notCaptured ? "bad" : par ? "warn" : "ok";
-  const head =
+  // Capping is not a failure, so it must not colour the result like one. A run
+  // that hit the cap and did everything else correctly is a success with more
+  // work waiting, which is amber at worst - never red.
+  const cls = rej || notCaptured ? "bad" : par || capped ? "warn" : "ok";
+
+  const parts =
     report.status === "saved"
-      ? `${report.selected} selected: ${saved} written to incoming, not ingested, ` +
-        `${notCaptured} not captured`
-      : `${report.selected} selected: ${ing} ingested, ${par} PARTIAL, ` +
-        `${skp} unchanged, ${rej} refused, ${notCaptured} not captured`;
-  const why = report.stoppedBy
-    ? `The run stopped early after a ${report.stoppedBy} failure. ` +
-      `Conversations after that point were not attempted.`
-    : "";
+      ? [`${saved} written to incoming, not ingested`]
+      : [`${ing} ingested`, `${par} PARTIAL`, `${skp} unchanged`, `${rej} refused`];
+  if (notCaptured) parts.push(`${notCaptured} not captured`);
+  const head = `${report.selected} selected: ${parts.join(", ")}`;
+
+  const whyBits = [];
+  if (capped) {
+    // Name the cap, the number, and the next action. "131 not captured" told
+    // the user nothing about whether something broke or what to do next.
+    whyBits.push(
+      `${capped} of the ${report.selected} were not attempted because this run ` +
+        `hit the per-run cap of ${report.limit || CAPTURE_MAX_PER_RUN} ` +
+        `conversations. Nothing failed and nothing was lost. Run it again to ` +
+        `capture the next ${report.limit || CAPTURE_MAX_PER_RUN}; the ones ` +
+        `already captured will come back as unchanged. The cap is deliberate - ` +
+        `it paces a bulk loop over endpoints that are not meant for one.`
+    );
+  }
+  if (report.stoppedBy) {
+    whyBits.push(
+      `The run stopped early after a ${report.stoppedBy} failure, so the ` +
+        `conversations after that point were not attempted. Re-running will hit ` +
+        `the same failure until the cause is fixed.`
+    );
+  }
 
   outEl.classList.remove("hidden");
-  render(cls, "Run complete", head, why);
+  render(cls, capped && !rej && !notCaptured ? "Batch complete" : "Run complete",
+         head, whyBits.join(" "));
   renderPerConversation(report);
 }
 

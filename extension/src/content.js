@@ -29,7 +29,8 @@ const LIST_PAGE_SIZE = 100;
 const LIST_PAGE_DELAY_MS = 250;
 const LIST_MAX_ITEMS = 2000;
 const CAPTURE_DELAY_MS = 500;
-const CAPTURE_MAX_PER_RUN = 25;
+// CAPTURE_MAX_PER_RUN comes from capture-core.js, which the popup also loads so
+// it can warn at selection time. One definition, two consumers.
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -281,15 +282,28 @@ async function captureMany(uuids) {
     }
   }
 
+  // "capped" is a distinct state from "not_attempted". Both mean the
+  // conversation was not captured, and they mean opposite things about whether
+  // anything is wrong: capped is the run working as designed and re-running
+  // continues, while not_attempted follows a fatal error and re-running repeats
+  // it until the cause is fixed. Sharing one label made a normal outcome read
+  // as failure.
   for (const rest of overflow) {
     failed.push({
       uuid: rest,
-      kind: "not_attempted",
-      detail: `over the ${CAPTURE_MAX_PER_RUN}-conversation limit for one run`,
+      kind: "capped",
+      detail: `beyond the ${CAPTURE_MAX_PER_RUN}-per-run cap`,
     });
   }
 
-  return { ok: true, captured, failed, stoppedBy, limit: CAPTURE_MAX_PER_RUN };
+  return {
+    ok: true,
+    captured,
+    failed,
+    stoppedBy,
+    limit: CAPTURE_MAX_PER_RUN,
+    cappedCount: overflow.length,
+  };
 }
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {

@@ -184,9 +184,17 @@ the interactive user DOES work while they are logged on, and does NOT run at
 06:00 if they are logged off. That is a real limitation of what this installer
 creates, so it is stated rather than papered over.
 
-### The task is shipped, not hand-made
+### The task is optional, and shipped rather than hand-made
 
-The scheduled task is created by `install-task.ps1`, not by hand. It was a
+The task is a convenience, not a requirement: nothing in the setup
+sequences creates it, and `kb_open.py` treats its absence as a normal
+outcome that just needs `kb_ingest.py`. It was demoted deliberately -
+engineering around a credential prompt, for a feature the pipeline does not
+need, is the wrong trade. What it creates is an *Interactive only* task,
+and the docs say so rather than implying unattended operation it cannot
+deliver.
+
+When it is created, it is created by `install-task.ps1`, not by hand. It was a
 hand-made artifact on one machine for months, which meant a fresh install got
 all the way through downloading an export - spending its single-use URLs - and
 then had nothing to trigger.

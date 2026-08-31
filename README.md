@@ -89,7 +89,7 @@ claude.ai settings -> export request -> manifest-*.json
     -> incoming/manifest-*.json      (you drop it there)
     -> kb_open.py                    opens each URL in a real browser, waits for
                                      the zips, validates them, moves them to
-                                     incoming/, triggers the ingest task
+                                     incoming/, then ingests
 incoming/*-000.zip
     -> kb_ingest.py                  merge-extracts ALL parts into one tree
     -> claude_kb.py update           incremental upsert, never wipes
@@ -227,15 +227,18 @@ cannot work and what it costs to find out again.
 
 ---
 
-## Scheduled ingest
+## Scheduled ingest (optional)
 
-`kb_ingest.py` runs unattended on a timer. **This is a required setup step, not
-an optional convenience**: `kb_open.py` triggers this task by name at the end of
-every collection run, so on a machine where it does not exist a fetch downloads
-the export parts - spending their single-use URLs - and then has nothing to hand
-them to.
+**You do not need this.** The normal workflow is running `kb_open.py` when you
+actually want an update, and finishing with `python kb_ingest.py`. This task
+only removes that second command, and picks up anything left in `incoming/`
+overnight.
 
-On Windows, create it once:
+`kb_open.py` tries to trigger it and, when there is no such task, simply tells
+you the one command that finishes the job. That is a normal outcome, not an
+error.
+
+If you want it, on Windows:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File install-task.ps1
@@ -249,10 +252,14 @@ quoted (either can contain spaces - getting that wrong is the classic way this
 task ends up created but broken), then **queries the task back and checks it
 really runs `kb_ingest.py`** rather than trusting the exit code.
 
-It also checks the task can actually **run**, not just that it would do the right
-thing if it did. A task created without stored credentials has Logon Mode
-*Interactive only*, meaning it runs only while its own account is logged on
-interactively:
+### What this task can and cannot do
+
+`schtasks` creates it **without stored credentials**, which means Logon Mode
+*Interactive only*: it runs only while its own account is logged on
+interactively. That is worth knowing before you rely on it - a daily 06:00
+ingest will not happen on a machine you log out of.
+
+The installer checks this rather than leaving you to find out:
 
 - registered as **the interactive user** - works, but it will **not** run at its
   scheduled time if you are logged off. The installer says so.
@@ -322,16 +329,14 @@ The whole path, start to finish. Steps 1-4 are covered under
    build it. It pins `mcp<2`; see [Prerequisites](#prerequisites).
 4. Index an export: `python claude_kb.py update <export-dir|zip>`. Confirm with
    `python claude_kb.py search "some term"`.
-5. **Create the ingest task** - see
-   [Scheduled ingest](#scheduled-ingest). `kb_open.py` triggers it by name at
-   the end of every collection run, so without it a fetch downloads the parts,
-   spends the one-time URLs, and then has nothing to hand them to.
-6. `python build_extension.py` - generates `kb-extension/build/`.
-7. Install that in Claude Desktop, by one of the two routes below.
-8. *Optional:* install the `claude/` templates for ingest and search ergonomics -
-   see [Claude Code integration](#claude-code-integration).
+5. `python build_extension.py` - generates `kb-extension/build/`.
+6. Install that in Claude Desktop, by one of the two routes below.
+7. *Optional:* install the `claude/` templates for ingest and search ergonomics -
+   see [Claude Code integration](#claude-code-integration), and the
+   [scheduled ingest task](#scheduled-ingest-optional) if you want ingests to
+   happen without you.
 
-After step 7, restart Desktop and ask it something that should hit your history.
+After step 6, restart Desktop and ask it something that should hit your history.
 If `kb_search` does not appear in a fresh session, the extension is not loaded.
 
 ### What the build step produces
@@ -578,8 +583,6 @@ browser extension cannot write to a folder or start a process.
 4. Build the index from an export: `python claude_kb.py update <export-dir|zip>`.
    Confirm with `python claude_kb.py search "some term"`. **Do this first** -
    without an index the extension cannot label anything as already captured.
-   Create the ingest task at the same time - see
-   [Scheduled ingest](#scheduled-ingest).
 5. **Put the repo where it will stay.** See the warning below; moving it later
    breaks the registration.
 6. **Load the extension.** Open your browser's extensions page, turn on

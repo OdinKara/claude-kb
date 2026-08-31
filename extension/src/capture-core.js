@@ -17,6 +17,17 @@ const CONV_UUID_RE =
 const FORMAT = "claude-kb-web-export";
 const FORMAT_VERSION = 1;
 
+/* How many conversations one run may capture.
+ *
+ * Lives here rather than in content.js because the POPUP needs it too - to warn
+ * at selection time rather than after a run - and a second copy of the number
+ * would drift into a UI that promises one cap while the code enforces another.
+ *
+ * The cap is a deliberate control against a bulk loop over internal, unsupported
+ * endpoints, not a limitation to engineer away. Re-running captures the next
+ * batch. */
+const CAPTURE_MAX_PER_RUN = 25;
+
 /* The uuid the capture is being taken FOR, from the page URL. */
 function uuidFromPath(pathname) {
   const m = String(pathname || "").match(/\/chat\/([^/?#]+)/i);
@@ -379,6 +390,7 @@ if (typeof module !== "undefined" && module.exports) {
     CONV_UUID_RE,
     FORMAT,
     FORMAT_VERSION,
+    CAPTURE_MAX_PER_RUN,
     uuidFromPath,
     flattenText,
     indexableMessages,
