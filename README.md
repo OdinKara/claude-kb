@@ -267,6 +267,54 @@ Both open the index **read-only**; the server cannot modify your database.
 
 ---
 
+## Claude Code integration
+
+**Optional.** Everything above works standalone from a terminal. This section
+only adds ergonomics: a `/kb-update` slash command, and natural-language
+triggers so "update the KB" routes to the right workflow instead of Code
+improvising one.
+
+Two template files live in `claude/`. Both need placeholders filled in; neither
+is used by the scripts themselves.
+
+### 1. The slash command
+
+Copy `claude/kb-update.md` to your **user-scoped** commands directory:
+
+| OS | destination |
+|---|---|
+| Windows | `C:\Users\<you>\.claude\commands\kb-update.md` |
+| macOS / Linux | `~/.claude/commands/kb-update.md` |
+
+Then edit the two placeholders at the top: `<PYTHON>` (full path to your
+interpreter) and `<CLAUDE_KB_SCRIPTS>` (the directory holding `kb_open.py`).
+Every other path is resolved through `kb_config.py` at run time, so there is
+nothing else to keep in sync.
+
+**User-scoped, not project-scoped.** A command placed in a project's
+`.claude/commands/` only resolves when the session's working directory is inside
+that project. Updating the KB is something you do from wherever you happen to
+be, so it belongs in `~/.claude/commands/`, where it resolves from any
+directory.
+
+### 2. The natural-language routing
+
+The slash command alone gives you `/kb-update`. To make plain phrasings work,
+append the block in `claude/CLAUDE.snippet.md` to your own `~/.claude/CLAUDE.md`
+and fill in its two paths. That block carries the trigger phrases, the
+instruction to read the command file rather than act on a remembered summary,
+the run-from-the-current-directory rule, and the prohibition on writing an HTTP
+downloader for export URLs.
+
+That last one has to live in `CLAUDE.md` rather than only in the command file,
+because it needs to be visible *before* Code opens the command file. A session
+that has already decided to improvise a downloader is not going to read the
+instructions first.
+
+Without the snippet, the slash command still works; you just have to type it.
+
+---
+
 ## Notes
 
 - The index is incremental. `update` upserts and never wipes, so re-ingesting an

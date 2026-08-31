@@ -1,0 +1,7 @@
+# Normalize line endings on the way in, check out LF everywhere. Without this,
+# a clone on a machine with core.autocrlf=true gets CRLF working files.
+* text=auto eol=lf
+
+# Nothing here is binary, but be explicit about the two that could be mistaken.
+*.png binary
+*.mcpb binary
