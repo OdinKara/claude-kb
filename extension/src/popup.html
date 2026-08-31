@@ -36,6 +36,11 @@
       Held-back and refused captures are reported as such, never as successes.
     </p>
 
+    <!-- capture-core FIRST: popup.js calls annotateRows() from it. The popup
+         and the content script are separate JavaScript worlds, so a file the
+         manifest injects into the page is NOT available here - it has to be
+         loaded again, explicitly. -->
+    <script src="capture-core.js"></script>
     <script src="popup.js"></script>
   </body>
 </html>
