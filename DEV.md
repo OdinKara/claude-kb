@@ -367,6 +367,33 @@ mojibake and can break parsing outright.
     background.js     the native-messaging bridge
     popup.*           reporting
 
+### Three scopes, and capture-core is loaded into each that needs it
+
+The popup, the content script and the service worker are separate JavaScript
+worlds. A file listed in `content_scripts` is injected into the PAGE and is not
+visible to the popup; `popup.html` has to load it again, explicitly, before
+`popup.js`.
+
+This is not a subtlety that can be left to memory. `annotateRows is not defined`
+shipped on the only path the feature has, because `popup.js` called a
+capture-core function that `popup.html` never loaded. Every previous suite had
+`require()`d capture-core directly and tested it in isolation - proving the pure
+logic correct and proving nothing whatsoever about whether the popup could see
+it. Thirty-one green cases, and the feature had never once been executed.
+
+`test_wiring.js` closes that class of hole in two layers: a static check that
+each bundle (popup / content / background) can resolve every capture-core
+function it calls, and a smoke run of the REAL click handler in a VM against a
+fake DOM and a stubbed `chrome.*`. The suite is itself verified against a
+deliberately broken copy - a test that passes on both the broken and the fixed
+code proves nothing.
+
+Note what the smoke test has to assert on. The handler wraps its body in
+try/catch and RENDERS the error, so "did it throw" passes even when the feature
+is completely broken. The assertion that catches it is on what the user actually
+sees: the rendered text must not contain "is not defined", and the list must
+actually populate.
+
 **The fetch lives in the content script, not the service worker.** These
 requests must be same-origin to carry the session cookie. A content script on
 claude.ai is same-origin by definition; a fetch from the extension origin is
