@@ -355,6 +355,54 @@ The script is deliberately **pure ASCII**. Windows PowerShell 5.1 reads a
 BOM-less UTF-8 file as Windows-1252, so a stray non-ASCII character becomes
 mojibake and can break parsing outright.
 
+## The capture extension
+
+`extension/` is MV3. The split is not cosmetic:
+
+    capture-core.js   pure. No fetch, no chrome.*, no DOM. Everything that
+                      DECIDES anything - the normalizer, validation, the
+                      envelope - so it can be tested outside a browser, which
+                      is the only way any of it gets tested at all.
+    content.js        the fetch, on claude.ai
+    background.js     the native-messaging bridge
+    popup.*           reporting
+
+**The fetch lives in the content script, not the service worker.** These
+requests must be same-origin to carry the session cookie. A content script on
+claude.ai is same-origin by definition; a fetch from the extension origin is
+not, and a Lax cookie would simply not be sent - which presents as being logged
+out, sending you to debug the wrong thing entirely.
+
+**`indexableMessages()` in capture-core.js must agree with `_conv_messages()` in
+claude_kb.py.** That agreement is the whole basis of the shrink guard: it
+compares the capture's count against the stored one, and if the two functions
+disagree it is comparing things that do not mean the same thing. Change one,
+change the other, and re-run the round-trip test - which drives a real
+extension-built envelope through the host into the reader rather than asserting
+the two agree.
+
+**API-only, no DOM fallback, on purpose.** A scrape of a virtualised transcript
+under-counts, and an under-count is precisely what the shrink guard rejects; a
+scrape that looked complete would be held back forever. There is no version of
+"degrade to scraping" that beats failing loudly.
+
+**Request `tree=True`, never `render_all_tools`.** The first because the export
+ships the whole tree and a pruned capture would look short. The second because
+those blocks are dropped by `flatten_text` anyway, so requesting them only adds
+shape divergence between what is captured and what is indexed.
+
+### Failures are classified, never collapsed
+
+`auth`, `shape`, `transport`, `notfound`, `mismatch`, `truncated`, `empty`. The
+endpoints are internal and unsupported - observed on one account, one browser,
+one day - so the interesting question when this breaks is *which* thing broke.
+"Could not export" answers nothing six months later.
+
+The load-bearing distinction: **a missing `chat_messages` key is `shape`; an
+empty array is `empty`.** Conflating them would let an API change present as a
+conversation with no messages - and a capture of nothing, believed, is the
+failure that could replace a real conversation with nothing.
+
 ## The MCP extension is generated, not checked in
 
 The repo holds one `claude_kb.py`. `.mcpb` requires the entry point inside the

@@ -1,0 +1,26 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <h1>Claude KB Capture</h1>
+
+    <div id="host" class="host">checking the native host...</div>
+
+    <div class="row">
+      <button id="ingest" disabled>Capture + Ingest</button>
+      <button id="save" class="secondary" disabled>Capture only</button>
+    </div>
+
+    <div id="out" class="out hidden"></div>
+
+    <p class="foot">
+      Captures the conversation in the active tab through claude.ai's own API.
+      Held-back and refused captures are reported as such, never as successes.
+    </p>
+
+    <script src="popup.js"></script>
+  </body>
+</html>
