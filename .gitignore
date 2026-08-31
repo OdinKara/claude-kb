@@ -1,0 +1,37 @@
+# ---------------------------------------------------------------------------
+# The index and the exports contain the FULL TEXT of every conversation.
+# Nothing below this heading may ever be committed.
+# ---------------------------------------------------------------------------
+*.db
+*.db-wal
+*.db-shm
+*.db.gz
+*.gz
+incoming/
+_retired/
+processed/
+staging/
+data-*/
+data-*.zip
+manifest-*.json
+*.zip
+*.log
+.canary-state.json
+.canary-state.json.part
+
+# Local configuration: contains absolute paths, and nothing about one machine
+# is useful to anyone else.
+config.json
+
+# Generated extension bundle - claude_kb.py and manifest.json here are copies,
+# regenerate with `python build_extension.py`.
+kb-extension/build/
+*.mcpb
+
+# Editor / interpreter noise
+*.bak-*
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.DS_Store

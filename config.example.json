@@ -1,0 +1,32 @@
+{
+  "_comment": [
+    "Copy to config.json and edit. config.json is gitignored.",
+    "Every key can also be set as an environment variable, which wins over this",
+    "file. Order is: environment variable > config.json > built-in default.",
+    "Only 'root' is required; delete any key you want to leave at its default."
+  ],
+
+  "_root": "REQUIRED. Working directory holding claude_kb.db, incoming/, processed/, ingest.log. No default - the scripts refuse to start rather than guess. Env: CLAUDE_KB_ROOT",
+  "root": "C:\\Users\\you\\Claude KB",
+
+  "_downloads": "Where the browser saves files; kb_open.py watches here for the export zips. Default: ~/Downloads. Env: CLAUDE_KB_DOWNLOADS",
+  "downloads": "C:\\Users\\you\\Downloads",
+
+  "_task": "Name of the OS scheduled task that runs kb_ingest.py. Default: ClaudeKB-Ingest. Env: CLAUDE_KB_TASK",
+  "task": "ClaudeKB-Ingest",
+
+  "_python": "Interpreter used to invoke claude_kb.py as a subprocess. Default: the running interpreter (sys.executable). Set this when the scheduled task runs under a different Python. Env: CLAUDE_KB_PYTHON",
+  "python": "C:\\Users\\you\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+
+  "_browser": "Full path to a browser that is LOGGED INTO claude.ai. String or list. Default: search Edge then Chrome in the usual Windows/macOS/Linux locations. A configured browser that does not exist is a hard error, never a fall-through to a guess - opening a one-time export URL in the wrong browser destroys it. Env: CLAUDE_KB_BROWSER",
+  "browser": "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+
+  "_export_dir": "Unpacked export directory used by `claude_kb.py build`. Default: the newest data-* directory under root. Not needed for `update`, `search`, or the MCP servers. Env: CLAUDE_KB_EXPORT_DIR",
+  "export_dir": "C:\\Users\\you\\Claude KB\\data-<your-export-id>",
+
+  "_http_port": "Localhost port for `claude_kb.py http`. Default: 8760. Env: CLAUDE_KB_HTTP_PORT",
+  "http_port": 8760,
+
+  "_author": "Name written into the generated MCP extension manifest by build_extension.py. Default: Unknown. Env: CLAUDE_KB_AUTHOR",
+  "author": "Your Name"
+}
