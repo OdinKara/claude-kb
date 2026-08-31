@@ -25,29 +25,31 @@ publish your history.
 
 ---
 
-## Status: what has and has not been tested
+## Status: verified end to end
 
-Honest accounting, because the one untested path is the one that spends
-single-use tokens.
+The whole chain has been exercised against a real account, not just unit-tested
+in pieces:
 
-**Verified working:**
+- **Configuration.** Resolution from environment variables, `config.json`, and
+  built-in defaults, including the deliberate refusal to start when `root` is
+  unset.
+- **Collection.** `kb_open.py --yes` against a live manifest: the canary proved
+  the login, the browser was resolved from configuration, and every part
+  downloaded and passed zip validation before being moved into `incoming/`.
+- **Ingest.** The multi-part merge, the incremental upsert, and the archive step,
+  driven by the real scheduled task under its configured name - including the
+  empty-input case, which logs its reason and exits cleanly rather than
+  erroring.
+- **Search.** `claude_kb.py search` against a populated index.
+- **MCP extension.** The bundle builds from a single source module, the
+  generated manifest passes schema validation, and the packed extension
+  installed in Claude Desktop answers `kb_search` correctly in a fresh session.
 
-- config resolution from environment variables, `config.json`, and defaults,
-  including the deliberate failure when `root` is unset
-- `claude_kb.py update` and `search` against a real index
-- `kb_ingest.py` under a real scheduled task, including the empty-input no-op
-- the generated MCP extension: bundle builds, manifest passes schema
-  validation, and the bundled module answers `kb_search` and starts its stdio
-  server cleanly
-
-**Not yet tested against a live export:** the `kb_open.py` download path.
-
-The parameterized browser/canary/download code has not run against a real
-manifest since it was parameterized. Every `export_url` is single-use, so this
-path cannot be rehearsed - it gets its first real test on the next export, and
-until then treat it as unproven. The logic is unchanged from the version that
-did work end to end before parameterization, but "unchanged logic" is not the
-same as "tested".
+The collection step is the one that cannot be rehearsed: every `export_url` is
+single-use, so each test of that path costs a real export. It has been run, and
+it works. If you change that code, you get one attempt per export to find out
+whether you broke it - which is why the canary exists, and why it spends the one
+token in the manifest that is already worth nothing.
 
 ## How it works
 
