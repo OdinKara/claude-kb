@@ -158,32 +158,74 @@ const btnCapSelSave = document.getElementById("capselsave");
 const capNote = document.getElementById("capnote");
 
 let rows = [];
+// The list as the API returned it, kept unannotated so the labels can be
+// recomputed after a batch without re-paging claude.ai.
+let listItems = [];
+// Conversations a previous run's cap deferred, when the list is not loaded yet.
+let pendingUuids = [];
 
 function selected() {
   return Array.from(listEl.querySelectorAll("input:checked")).map((i) => i.value);
 }
 
+function setChecked(uuids) {
+  const want = new Set(uuids);
+  listEl.querySelectorAll("input").forEach((i) => (i.checked = want.has(i.value)));
+  refreshSelection();
+}
+
 /* The list buttons carry the SAME labels as the single-conversation pair above,
  * because they are the same two actions. A list button that just said "Capture
  * selected" would leave you guessing which of the two it did. */
+/* The buttons say what pressing them will actually DO.
+ *
+ * With more selected than the cap, "Capture + Ingest (156)" was a promise the
+ * run could not keep. Naming the batch - "Capture next 25 of 156" - is true on
+ * the first press and equally true on the fourth, which is what lets one button
+ * carry a multi-batch sequence instead of the user reverse-engineering one. */
 function refreshSelection() {
   const n = selected().length;
+  const batch = Math.min(n, CAPTURE_MAX_PER_RUN);
   btnCapSel.disabled = n === 0;
   btnCapSelSave.disabled = n === 0;
-  btnCapSel.textContent = n ? `Capture + Ingest (${n})` : "Capture + Ingest";
-  btnCapSelSave.textContent = n ? `Capture only (${n})` : "Capture only";
 
-  // Say the cap applies BEFORE the run, not after it. Selecting 156 and being
-  // told afterwards that 131 "were not captured" is a bad way to learn a limit
-  // exists.
   if (n > CAPTURE_MAX_PER_RUN) {
+    btnCapSel.textContent = `Capture next ${batch} of ${n}`;
+    btnCapSelSave.textContent = `Capture only (${batch} of ${n})`;
     capNote.textContent =
-      `${n} selected - this run will capture the first ${CAPTURE_MAX_PER_RUN}. ` +
-      `Run it again for the next batch.`;
+      `${n} selected. Each run captures ${CAPTURE_MAX_PER_RUN}; the rest stay ` +
+      `selected here, so press again to continue.`;
     capNote.classList.remove("hidden");
   } else {
+    btnCapSel.textContent = n ? `Capture + Ingest (${n})` : "Capture + Ingest";
+    btnCapSelSave.textContent = n ? `Capture only (${n})` : "Capture only";
     capNote.classList.add("hidden");
   }
+}
+
+/* Re-label the list against what is indexed NOW, keeping the given selection.
+ *
+ * Without this the rows just captured still read "new" and "select new" would
+ * hand them back on the next press. Cheap: it asks the host what is indexed and
+ * does not touch claude.ai. */
+async function reannotate(keepSelected) {
+  if (!listItems.length) return;
+  let indexed = null;
+  try {
+    const res = await chrome.runtime.sendMessage({ type: "refresh_indexed" });
+    if (res && res.ok) indexed = res.indexed;
+  } catch (_e) {
+    /* stale labels are worth saying, not worth failing over */
+  }
+  if (!indexed) {
+    capNote.textContent =
+      "Could not refresh which conversations are indexed - the labels below may " +
+      "be out of date. The selection is still correct.";
+    capNote.classList.remove("hidden");
+    return;
+  }
+  renderList(annotateRows(listItems, indexed));
+  setChecked(keepSelected || []);
 }
 
 function renderList(annotated, note) {
@@ -287,15 +329,15 @@ function showRun(report) {
 
   const whyBits = [];
   if (capped) {
-    // Name the cap, the number, and the next action. "131 not captured" told
-    // the user nothing about whether something broke or what to do next.
+    // Describe only what the UI actually does. The previous wording told people
+    // to "run it again", which was true of the code and false of the button -
+    // the selection was consumed, so pressing it again did nothing.
     whyBits.push(
       `${capped} of the ${report.selected} were not attempted because this run ` +
         `hit the per-run cap of ${report.limit || CAPTURE_MAX_PER_RUN} ` +
-        `conversations. Nothing failed and nothing was lost. Run it again to ` +
-        `capture the next ${report.limit || CAPTURE_MAX_PER_RUN}; the ones ` +
-        `already captured will come back as unchanged. The cap is deliberate - ` +
-        `it paces a bulk loop over endpoints that are not meant for one.`
+        `conversations. Nothing failed and nothing was lost. Those ${capped} are ` +
+        `still selected below - press the button again to continue. The cap is ` +
+        `deliberate: it paces a bulk loop over endpoints that are not meant for one.`
     );
   }
   if (report.stoppedBy) {
@@ -330,8 +372,21 @@ btnLoad.addEventListener("click", async () => {
     const notes = [];
     if (res.listed.truncated) notes.push(`capped at ${res.listed.max}`);
     if (res.indexedError) notes.push("index unknown: " + res.indexedError);
-    renderList(annotateRows(res.listed.items, res.indexed), notes.join(", "));
-    render("ok", "List loaded", `${res.indexedCount} conversations already indexed.`);
+    listItems = res.listed.items;
+    renderList(annotateRows(listItems, res.indexed), notes.join(", "));
+
+    // Pick a sequence back up after the popup was closed mid-run.
+    const resumable = pendingUuids.filter((u) =>
+      listItems.some((it) => it.uuid === u)
+    );
+    if (resumable.length) {
+      setChecked(resumable);
+      render("warn", "Sequence resumed",
+        `${resumable.length} conversations were still pending from your last ` +
+        `run and have been reselected.`);
+    } else {
+      render("ok", "List loaded", `${res.indexedCount} conversations already indexed.`);
+    }
   } catch (e) {
     render("bad", "Extension error", String((e && e.message) || e));
   } finally {
@@ -356,15 +411,32 @@ document.getElementById("selnone").addEventListener("click", (e) => {
 
 async function captureSelected(ingest) {
   const uuids = selected();
+  const batch = Math.min(uuids.length, CAPTURE_MAX_PER_RUN);
   busy(true);
   btnCapSel.disabled = true;
   btnCapSelSave.disabled = true;
   outEl.classList.remove("hidden");
-  render("warn", "Capturing...", `0 of ${uuids.length}. This is paced deliberately.`);
+  render("warn", "Capturing...", `0 of ${batch}. This is paced deliberately.`);
   try {
-    showRun(
-      await chrome.runtime.sendMessage({ type: "capture_selected", uuids, ingest })
-    );
+    const report = await chrome.runtime.sendMessage({
+      type: "capture_selected", uuids, ingest,
+    });
+    showRun(report);
+
+    // Leave the sequence exactly where the user can continue it: the deferred
+    // conversations still selected, the labels reflecting the batch that just
+    // landed, and the button naming the next batch.
+    const remaining = (report && report.remaining) || [];
+    if (remaining.length) {
+      await reannotate(remaining);
+    } else {
+      await reannotate(selected().filter((u) => false));
+      try {
+        await chrome.runtime.sendMessage({ type: "clear_pending" });
+      } catch (_e) {
+        /* nothing pending is the normal end state */
+      }
+    }
   } catch (e) {
     render("bad", "Extension error", String((e && e.message) || e));
   } finally {
@@ -415,13 +487,25 @@ btnSave.addEventListener("click", () => send("capture_only"));
   }
 
   // A bulk run outlives the popup. Show the last one on open so closing the
-  // window mid-run does not lose the account of what landed.
+  // window mid-run does not lose the account of what landed, and say plainly
+  // that a capped sequence can still be continued.
   const last = await chrome.runtime.sendMessage({ type: "last_run" });
-  if (last && last.perConversation && last.perConversation.length) {
-    showRun(last);
+  const report = last && last.lastRun;
+  pendingUuids = (last && last.pending) || [];
+
+  if (report && report.perConversation && report.perConversation.length) {
+    showRun(report);
     const note = document.createElement("span");
     note.className = "why";
-    note.textContent = "This is the previous run's report.";
+    note.textContent = pendingUuids.length
+      ? `This is the previous run's report. ${pendingUuids.length} conversations ` +
+        `are still pending - load the chat list and they will be reselected for you.`
+      : "This is the previous run's report.";
     outEl.appendChild(note);
+  } else if (pendingUuids.length) {
+    outEl.classList.remove("hidden");
+    render("warn", "Sequence in progress",
+      `${pendingUuids.length} conversations are still pending from a capped run.`,
+      "Load the chat list and they will be reselected for you.");
   }
 })();
