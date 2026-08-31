@@ -9,21 +9,24 @@ with the conversation id to read the rest of the thread.
 
 ---
 
-## Setting up with Claude Code
+## Quick start
 
-Clone the repo, open Claude Code in the directory, and either run **`/kb-setup`**
-or just say *"set this up"*. The repo carries its own `CLAUDE.md`, which Code
-loads automatically, so it will follow the sequences below rather than
-improvising one.
+```bash
+git clone https://github.com/OdinKara/claude-kb
+cd claude-kb
+```
 
-It checks your prerequisites first and reports them together, asks what you
-actually want before building anything, and stops at each step it cannot do for
-you - loading the extension unpacked and reading its ID, and installing the
-`.mcpb` in Claude Desktop are yours. It will not request a data export without
-asking: those URLs are single-use.
+Now open Claude Code in that directory and say **"set this up"**, or run
+**`/kb-setup`**.
 
-**Everything below still works by hand**, and remains the source of truth. The
-setup command walks these same sequences; it does not replace them.
+It checks your prerequisites, asks what you actually want, builds the index and
+wires up search, and stops to ask you for the two things it cannot do itself:
+**loading the extension unpacked and reading its ID**, and **installing the
+`.mcpb` in Claude Desktop**. It never requests a data export without asking -
+those URLs are single-use.
+
+*Not using Claude Code?* Everything below is the same setup done by hand, and
+remains the source of truth.
 
 ---
 
