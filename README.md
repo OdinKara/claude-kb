@@ -543,6 +543,12 @@ it and the last run is still there.
 The labels need the native host (it answers a read-only query for what is
 indexed). If the host is unreachable the list still loads, just unlabelled.
 
+**If your account has more than one organisation** - a Claude subscription plus
+API console access, say - only the subscription one holds conversations. The
+extension selects it by capability rather than by whichever the API lists first,
+so this needs nothing from you. An API-only account is reported as *no chat
+organisation*, which is a different thing from being signed out.
+
 ### What the popup is telling you
 
 The outcomes are kept distinct on purpose. A capture that was held back or
@@ -563,7 +569,9 @@ saves the investigation:
 
 | Reason | What it actually means |
 |---|---|
-| **Not signed in** | `401`/`403`, or an HTML login page. Sign in and retry. |
+| **Not signed in** | `401`, or an HTML login page. Sign in and retry. |
+| **Not permitted - and you ARE signed in** | `403`. The request was understood and refused, which is *not* a session problem. Do not go looking at your login. |
+| **No chat organisation on this account** | None of the account's organisations has the `chat` capability, so none holds conversations. An API-only account looks like this. |
 | **The API shape has changed** | A `200` whose body is missing fields this expects. **This is the one that means the extension needs updating.** Nothing was written. |
 | **Could not reach claude.ai** | Network-level: offline, DNS, timeout. Not auth, not an API change. |
 | **Identity mismatch - refused** | The API returned a different conversation than the URL names. Capturing it would file it under the wrong identity. |
