@@ -446,6 +446,103 @@ excerpts or an exhaustive list of every hit.
 
 ---
 
+## Browser capture (optional)
+
+The export pipeline above is the authoritative path, and it stays that way. This
+adds a second, lighter one: a browser extension that captures the conversation
+you are reading straight into `incoming/`, so a chat is searchable without
+waiting for the next data export.
+
+> **These endpoints are internal and unsupported.** They were observed working on
+> one account, in one browser, on one day. That is a snapshot, not a spec. There
+> is no version header, no deprecation notice, and no promise they will exist
+> next month. The extension is built to *fail loudly and specifically* when they
+> change - see [What the popup is telling you](#what-the-popup-is-telling-you) -
+> and to write nothing when it cannot verify what it got.
+
+### Why there is no DOM fallback
+
+There was one in the design, and it was cut deliberately. The API returns the
+whole transcript in one response with an honest message count; a scrape of a
+virtualised transcript silently under-counts. An under-count is exactly the
+input the ingest side's shrink guard rejects, so a scrape that *looked* complete
+would produce captures held back forever. Failing loudly beats degrading to a
+lossy method that can quietly damage the index.
+
+### Setup
+
+Three steps, in this order. The extension is useless without the native host,
+because a browser extension cannot write to a folder or start a process.
+
+**1. Load the extension.** In Chrome or Edge, open the extensions page, turn on
+developer mode, choose *Load unpacked*, and select the `extension/` directory.
+Copy the extension ID from its card.
+
+**2. Register the native host**, using that ID:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File native\install-host.ps1 `
+    -ExtensionId <id from the extension card> `
+    -ScriptsDir  "C:\path\to\claude-kb"
+```
+
+That generates `native\host.cmd` and the host manifest from your values and
+registers them under HKCU for both browsers. The interpreter comes from
+`config.json` if it is there; pass `-Python` to override. Both generated files
+are gitignored - they hold absolute paths specific to your machine.
+
+**3. Reload the extension** and open its popup. It should say *Host ready* and
+name the `incoming/` directory it will write to. If it does not, run
+`native\host.cmd` directly in a terminal: it should sit waiting for input rather
+than exiting with an error.
+
+To remove it: `install-host.ps1 -Uninstall -ExtensionId <id> -ScriptsDir <dir>`.
+
+### Using it
+
+Open a conversation on claude.ai and click the extension.
+
+- **Capture + Ingest** - write the capture and index it immediately.
+- **Capture only** - write it to `incoming/` and leave it for the scheduled run.
+
+The capture is taken with `tree=True`, which returns the whole message tree
+including branches you regenerated away from. That is deliberate: the official
+export ships the whole tree too, and capturing only the active path would make
+every branched conversation look short to the shrink guard.
+
+### What the popup is telling you
+
+The outcomes are kept distinct on purpose. A capture that was held back or
+refused must never read as a success.
+
+| Outcome | Meaning | Did anything change? |
+|---|---|---|
+| **Ingested** | Indexed as new or updated. | Yes |
+| **Saved (not ingested)** | Written to `incoming/`, waiting for a run. | Not yet |
+| **Already indexed, unchanged** | Identical to what is stored. | No, and nothing was lost |
+| **Held back - PARTIAL** | Fewer messages than the copy already indexed, so it was not allowed to replace it. Normal when an export already covers this chat. | No, and nothing was lost |
+| **Partly ingested** | Several captures, mixed outcomes. Refused files stay in `incoming/`. | Some |
+| **Refused** | Failed validation. The file stays in `incoming/` so you can look at it. | No |
+
+And when the capture never happened at all, the reason is classified rather than
+collapsed into "could not export" - six months from now the distinction is what
+saves the investigation:
+
+| Reason | What it actually means |
+|---|---|
+| **Not signed in** | `401`/`403`, or an HTML login page. Sign in and retry. |
+| **The API shape has changed** | A `200` whose body is missing fields this expects. **This is the one that means the extension needs updating.** Nothing was written. |
+| **Could not reach claude.ai** | Network-level: offline, DNS, timeout. Not auth, not an API change. |
+| **Identity mismatch - refused** | The API returned a different conversation than the URL names. Capturing it would file it under the wrong identity. |
+| **Transcript incomplete - refused** | At least one message came back `truncated`, so the text is incomplete. |
+| **Nothing to capture** | The conversation genuinely has no indexable messages. |
+
+A missing `chat_messages` field is reported as a **shape change**, never as an
+empty conversation. Conflating those is the failure that could let a capture
+replace a real conversation with nothing.
+
+---
+
 ## Notes
 
 - The index is incremental. `update` upserts and never wipes, so re-ingesting an

@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "Claude KB Capture",
+  "version": "0.1.0",
+  "description": "Capture the current claude.ai conversation into your Claude KB incoming folder, with optional ingest.",
+  "action": {
+    "default_title": "Claude KB Capture",
+    "default_popup": "src/popup.html"
+  },
+  "background": {
+    "service_worker": "src/background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://claude.ai/*"],
+      "js": ["src/capture-core.js", "src/content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "permissions": ["nativeMessaging", "tabs"],
+  "host_permissions": ["https://claude.ai/*"]
+}

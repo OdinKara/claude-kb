@@ -1,0 +1,92 @@
+:root {
+  --bg: #ffffff;
+  --fg: #1b1b1b;
+  --muted: #5f6368;
+  --line: #dcdcdc;
+  --ok: #1a7f37;
+  --ok-bg: #eaf6ed;
+  --warn: #8a5a00;
+  --warn-bg: #fdf3e2;
+  --bad: #b3261e;
+  --bad-bg: #fbeceb;
+  --accent: #3b5bdb;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1c1c1e;
+    --fg: #ececec;
+    --muted: #a0a0a5;
+    --line: #3a3a3d;
+    --ok: #6fce8a;
+    --ok-bg: #1d2f22;
+    --warn: #e8b562;
+    --warn-bg: #33280f;
+    --bad: #f2857c;
+    --bad-bg: #35201e;
+    --accent: #8ea4f5;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  width: 360px;
+  margin: 0;
+  padding: 14px;
+  background: var(--bg);
+  color: var(--fg);
+  font: 13px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+h1 { font-size: 14px; margin: 0 0 10px; }
+
+.host {
+  font-size: 12px;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 7px 9px;
+  margin-bottom: 10px;
+  word-break: break-all;
+}
+.host.bad { color: var(--bad); border-color: var(--bad); background: var(--bad-bg); }
+
+.row { display: flex; gap: 8px; }
+
+button {
+  flex: 1;
+  padding: 8px 10px;
+  font: inherit;
+  font-weight: 600;
+  color: #fff;
+  background: var(--accent);
+  border: 1px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+}
+button.secondary { background: transparent; color: var(--fg); border-color: var(--line); }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.out {
+  margin-top: 10px;
+  padding: 9px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.out .label { font-weight: 700; display: block; margin-bottom: 3px; }
+.out .why { color: var(--muted); display: block; margin-top: 5px; }
+
+.out.ok      { border-color: var(--ok);   background: var(--ok-bg); }
+.out.ok .label { color: var(--ok); }
+.out.warn    { border-color: var(--warn); background: var(--warn-bg); }
+.out.warn .label { color: var(--warn); }
+.out.bad     { border-color: var(--bad);  background: var(--bad-bg); }
+.out.bad .label { color: var(--bad); }
+
+.hidden { display: none; }
+
+.foot { color: var(--muted); font-size: 11px; margin: 10px 0 0; }
