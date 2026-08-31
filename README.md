@@ -9,6 +9,24 @@ with the conversation id to read the rest of the thread.
 
 ---
 
+## Setting up with Claude Code
+
+Clone the repo, open Claude Code in the directory, and either run **`/kb-setup`**
+or just say *"set this up"*. The repo carries its own `CLAUDE.md`, which Code
+loads automatically, so it will follow the sequences below rather than
+improvising one.
+
+It checks your prerequisites first and reports them together, asks what you
+actually want before building anything, and stops at each step it cannot do for
+you - loading the extension unpacked and reading its ID, and installing the
+`.mcpb` in Claude Desktop are yours. It will not request a data export without
+asking: those URLs are single-use.
+
+**Everything below still works by hand**, and remains the source of truth. The
+setup command walks these same sequences; it does not replace them.
+
+---
+
 ## WARNING: The database contains everything you have ever said to Claude
 
 `claude_kb.db` holds the **full text of every message in every conversation you
