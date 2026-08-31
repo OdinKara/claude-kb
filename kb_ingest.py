@@ -117,24 +117,42 @@ def ingest_web(paths):
         fail(names, out, "web capture")
         return
 
-    ingested = [ln[len("INGESTED "):].strip()
-                for ln in out.splitlines() if ln.startswith("INGESTED ")]
+    def tagged(tag):
+        return [ln[len(tag) + 1:].strip()
+                for ln in out.splitlines() if ln.startswith(tag + " ")]
+
+    # INGESTED reached the index; PARTIAL and SKIPPED did not but were accepted,
+    # and are archived all the same - a capture shorter than what is stored
+    # stays shorter, and an unchanged one has nothing left to contribute, so
+    # leaving either to retry accomplishes nothing.
+    ingested = tagged("INGESTED")
+    partial = tagged("PARTIAL")
+    skipped = tagged("SKIPPED")
+    accepted = ingested + partial + skipped
+
     # Carry the child's reasons into the log. A rejection whose cause is
     # computed and then dropped is undiagnosable the morning after.
     rejected = [ln[len("REJECTED "):].strip()
                 for ln in out.splitlines() if ln.startswith("REJECTED ")]
     why = ("; ".join(rejected))[:400] if rejected else ""
 
-    if not ingested:
+    if not accepted:
         log(f"web captures [{names}] - none accepted, left in incoming"
             f"{' (' + why + ')' if why else ''} | {summary}")
         return
 
     st = stamp()
-    archive(ingested, st)
-    kept = ", ".join(os.path.basename(p) for p in ingested)
+    archive(accepted, st)
+    bits = []
+    if ingested:
+        bits.append("ingested " + ", ".join(os.path.basename(p) for p in ingested))
+    if partial:
+        bits.append("PARTIAL (not replaced) "
+                    + ", ".join(os.path.basename(p) for p in partial))
+    if skipped:
+        bits.append("unchanged " + ", ".join(os.path.basename(p) for p in skipped))
     tail = f" ({len(rejected)} rejected, left in incoming: {why})" if rejected else ""
-    log(f"ingested web captures [{kept}] -> processed/{st}_*{tail} | {summary}")
+    log(f"web captures: {'; '.join(bits)} -> processed/{st}_*{tail} | {summary}")
 
 
 def find_parts():
