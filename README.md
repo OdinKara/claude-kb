@@ -510,6 +510,39 @@ including branches you regenerated away from. That is deliberate: the official
 export ships the whole tree too, and capturing only the active path would make
 every branched conversation look short to the shrink guard.
 
+### Capturing several at once
+
+**Load chat list** pages through your conversations and shows them most recent
+first, each labelled against what the KB already holds:
+
+| Label | Meaning |
+|---|---|
+| **new** | not indexed at all |
+| **grown** | indexed, but the conversation has changed since |
+| **indexed** | indexed, and unchanged since |
+
+`grown` is inferred from `updated_at` - the list endpoint carries no message
+count - so it means "changed since it was indexed". It is a hint to make
+selection sensible, not a prediction: a `grown` row can still come back
+**unchanged** if the change did not alter indexable text.
+
+*select new* ticks everything new or grown, which is usually what you want.
+Then **Capture selected**.
+
+**Runs are paced on purpose.** Half a second between conversations, a quarter
+second between list pages, and a cap of 25 conversations per run. These are
+internal endpoints and a tight bulk loop is the behaviour most likely to be
+throttled, so the run is slow by design - start it and come back.
+
+**Every selected conversation gets an outcome**, listed individually. If the run
+stops early - an authentication failure, say - the ones after that point are
+marked *not attempted* rather than silently dropped, and whatever was captured
+before the stop is still ingested. The report survives closing the popup: reopen
+it and the last run is still there.
+
+The labels need the native host (it answers a read-only query for what is
+indexed). If the host is unreachable the list still loads, just unlabelled.
+
 ### What the popup is telling you
 
 The outcomes are kept distinct on purpose. A capture that was held back or

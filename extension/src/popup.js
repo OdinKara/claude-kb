@@ -135,6 +135,193 @@ function show(reply) {
   }
 }
 
+/* ------------------------------------------------------------------ list UI */
+
+const listWrap = document.getElementById("listwrap");
+const listEl = document.getElementById("list");
+const countsEl = document.getElementById("counts");
+const btnLoad = document.getElementById("load");
+const btnCapSel = document.getElementById("capsel");
+
+let rows = [];
+
+function selected() {
+  return Array.from(listEl.querySelectorAll("input:checked")).map((i) => i.value);
+}
+
+function refreshSelection() {
+  const n = selected().length;
+  btnCapSel.disabled = n === 0;
+  btnCapSel.textContent = n ? `Capture selected (${n})` : "Capture selected";
+}
+
+function renderList(annotated, note) {
+  rows = annotated;
+  listEl.textContent = "";
+  const tally = { new: 0, grown: 0, indexed: 0 };
+
+  for (const r of annotated) {
+    tally[r.state] = (tally[r.state] || 0) + 1;
+
+    const item = document.createElement("label");
+    item.className = "item";
+
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.value = r.uuid;
+    box.addEventListener("change", refreshSelection);
+
+    const meta = document.createElement("span");
+    meta.className = "meta";
+    const name = document.createElement("span");
+    name.className = "name";
+    name.textContent = r.name;
+    const sub = document.createElement("span");
+    sub.className = "sub";
+    sub.textContent =
+      (r.updated_at ? r.updated_at.slice(0, 10) : "no date") +
+      (r.msg_count ? ` - ${r.msg_count} indexed` : "");
+    meta.appendChild(name);
+    meta.appendChild(sub);
+
+    const tag = document.createElement("span");
+    tag.className = "tag " + r.state;
+    tag.textContent = r.state === "grown" ? "grown" : r.state;
+
+    item.appendChild(box);
+    item.appendChild(meta);
+    item.appendChild(tag);
+    listEl.appendChild(item);
+  }
+
+  countsEl.textContent =
+    `${annotated.length} chats - ${tally.new} new, ${tally.grown} grown, ` +
+    `${tally.indexed} indexed` + (note ? ` - ${note}` : "");
+  listWrap.classList.remove("hidden");
+  refreshSelection();
+}
+
+function renderPerConversation(report) {
+  const box = document.createElement("div");
+  box.className = "results";
+  for (const c of report.perConversation || []) {
+    const line = document.createElement("div");
+    const o = document.createElement("span");
+    const head = String(c.outcome || "").split(":")[0];
+    o.className =
+      "o " +
+      (head === "INGESTED" ? "o-ing"
+        : head === "PARTIAL" ? "o-par"
+        : head === "SKIPPED" ? "o-skp"
+        : "o-rej");
+    o.textContent = c.outcome;
+    line.appendChild(o);
+    line.appendChild(
+      document.createTextNode(" - " + (c.title || c.uuid.slice(0, 8)))
+    );
+    box.appendChild(line);
+  }
+  outEl.appendChild(box);
+}
+
+function showRun(report) {
+  if (!report) return;
+  if (report.status === "capture_failed" || report.ok === false) {
+    render("bad", "Run failed", report.message || "");
+    if (report.perConversation && report.perConversation.length) {
+      renderPerConversation(report);
+    }
+    return;
+  }
+
+  const ing = (report.ingested || []).length;
+  const par = (report.partial || []).length;
+  const skp = (report.skipped || []).length;
+  const rej = (report.rejected || []).length;
+  const notCaptured = report.failedCount || 0;
+
+  const cls = rej || notCaptured ? "bad" : par ? "warn" : "ok";
+  const head =
+    `${report.selected} selected: ${ing} ingested, ${par} PARTIAL, ` +
+    `${skp} unchanged, ${rej} refused, ${notCaptured} not captured`;
+  const why = report.stoppedBy
+    ? `The run stopped early after a ${report.stoppedBy} failure. ` +
+      `Conversations after that point were not attempted.`
+    : "";
+
+  outEl.classList.remove("hidden");
+  render(cls, "Run complete", head, why);
+  renderPerConversation(report);
+}
+
+btnLoad.addEventListener("click", async () => {
+  btnLoad.disabled = true;
+  outEl.classList.remove("hidden");
+  render("warn", "Loading...", "Paging through the conversation list.");
+  try {
+    const res = await chrome.runtime.sendMessage({ type: "list_conversations" });
+    if (!res || !res.ok) {
+      const l = res && res.listed;
+      const [label, why] = (l && CAPTURE_REASONS[l.kind]) || [
+        "Could not load the list",
+        "",
+      ];
+      render("bad", label, (res && (res.message || (l && l.detail))) || "", why);
+      return;
+    }
+    const notes = [];
+    if (res.listed.truncated) notes.push(`capped at ${res.listed.max}`);
+    if (res.indexedError) notes.push("index unknown: " + res.indexedError);
+    renderList(annotateRows(res.listed.items, res.indexed), notes.join(", "));
+    render("ok", "List loaded", `${res.indexedCount} conversations already indexed.`);
+  } catch (e) {
+    render("bad", "Extension error", String((e && e.message) || e));
+  } finally {
+    btnLoad.disabled = false;
+  }
+});
+
+document.getElementById("selnew").addEventListener("click", (e) => {
+  e.preventDefault();
+  const wanted = new Set(
+    rows.filter((r) => r.state === "new" || r.state === "grown").map((r) => r.uuid)
+  );
+  listEl.querySelectorAll("input").forEach((i) => (i.checked = wanted.has(i.value)));
+  refreshSelection();
+});
+
+document.getElementById("selnone").addEventListener("click", (e) => {
+  e.preventDefault();
+  listEl.querySelectorAll("input").forEach((i) => (i.checked = false));
+  refreshSelection();
+});
+
+btnCapSel.addEventListener("click", async () => {
+  const uuids = selected();
+  busy(true);
+  btnCapSel.disabled = true;
+  outEl.classList.remove("hidden");
+  render("warn", "Capturing...", `0 of ${uuids.length}. This is paced deliberately.`);
+  try {
+    showRun(await chrome.runtime.sendMessage({ type: "capture_selected", uuids }));
+  } catch (e) {
+    render("bad", "Extension error", String((e && e.message) || e));
+  } finally {
+    busy(false);
+    refreshSelection();
+  }
+});
+
+chrome.runtime.onMessage.addListener((m) => {
+  if (m && m.type === "capture_progress") {
+    render(
+      "warn",
+      "Capturing...",
+      `${m.done + 1} of ${m.total}. This is paced deliberately.`
+    );
+  }
+});
+
 async function send(type) {
   busy(true);
   outEl.classList.remove("hidden");
@@ -157,8 +344,20 @@ btnSave.addEventListener("click", () => send("capture_only"));
     hostEl.textContent = "Host ready - writes to " + (reply.incoming || "incoming");
     btnIngest.disabled = false;
     btnSave.disabled = false;
+    btnLoad.disabled = false;
   } else {
     hostEl.className = "host bad";
     hostEl.textContent = (reply && reply.message) || "The native host did not answer.";
+  }
+
+  // A bulk run outlives the popup. Show the last one on open so closing the
+  // window mid-run does not lose the account of what landed.
+  const last = await chrome.runtime.sendMessage({ type: "last_run" });
+  if (last && last.perConversation && last.perConversation.length) {
+    showRun(last);
+    const note = document.createElement("span");
+    note.className = "why";
+    note.textContent = "This is the previous run's report.";
+    outEl.appendChild(note);
   }
 })();

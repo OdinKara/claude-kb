@@ -391,6 +391,65 @@ ships the whole tree and a pruned capture would look short. The second because
 those blocks are dropped by `flatten_text` anyway, so requesting them only adds
 shape divergence between what is captured and what is indexed.
 
+### Listing and bulk capture
+
+The list comes from `GET .../chat_conversations?limit&offset`, paged. Bulk
+capture goes through the SAME `captureOne()` as the single-capture button - same
+validation, same envelope, same refusals. There is deliberately no second
+capture implementation for the bulk case: two paths would drift, and only one of
+them would be the one whose validation was right.
+
+**Paced on purpose.** A tight bulk loop against internal endpoints is the single
+behaviour most likely to be throttled or noticed, and none of this is
+latency-critical - a run is something you start and walk away from. So:
+`LIST_PAGE_DELAY_MS`, `CAPTURE_DELAY_MS`, a per-run cap
+(`CAPTURE_MAX_PER_RUN`), and a list cap (`LIST_MAX_ITEMS`) that also stops a
+changed pagination contract from spinning forever.
+
+**A run always accounts for every conversation selected.** Captured ones carry
+the host's per-file disposition; ones that failed carry their reason; and after
+a fatal `auth`/`shape` failure the loop stops and marks the remainder
+`not_attempted` rather than hammering the endpoint for identical failures. A
+bulk run that stops halfway and reports only "failed" leaves you guessing what
+landed, which is the same class of problem as a rejection whose reason is
+discarded.
+
+Whatever was captured before a fatal stop is still sent. Files already in hand
+should not be thrown away because a later one failed.
+
+### Marking what is already indexed
+
+`indexed` is a READ-ONLY host message returning `{uuid: {msg_count,
+updated_at}}`, used to label rows new / indexed / grown. Without it, selecting
+from an account that has already been exported is guesswork and most captures
+come back SKIPPED or PARTIAL.
+
+It is a distinct message type rather than a widening of anything that writes.
+Every widening of a writing path is a widening of what a compromised extension
+can do; this one opens the database `mode=ro` and cannot modify it even in
+principle, and `safe_name` is untouched.
+
+Note that a read-only connection to a WAL database still creates `-shm`/`-wal`
+sidecars and cannot remove them on close - that is SQLite, not a write, and the
+existing `kb_search` path does exactly the same on every search. The test
+asserts the WAL is empty and the database bytes are unchanged, which is the
+claim that actually matters.
+
+**`grown` is inferred from `updated_at`**, because the list endpoint carries no
+message count. It means "changed since it was indexed" - a hint to make
+selection sensible, not a prediction. A `grown` row may still come back SKIPPED
+if the change did not alter indexable text.
+
+### Not in scope: Markdown export
+
+The reference implementation this borrows from offers an optional Markdown
+export alongside the JSON. It is deliberately absent here and should stay that
+way unless something changes: the KB indexes conversations and project docs, and
+nothing in the pipeline reads Markdown. Adding it would produce files that look
+like part of the system but are never ingested - a reading feature wearing a
+search feature's clothes. If you want a conversation as prose, the index already
+has the text.
+
 ### Failures are classified, never collapsed
 
 `auth`, `shape`, `transport`, `notfound`, `mismatch`, `truncated`, `empty`. The

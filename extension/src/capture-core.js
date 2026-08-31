@@ -159,6 +159,88 @@ function captureFilename(date) {
   );
 }
 
+/* ------------------------------------------------------------------ listing */
+
+/* Normalise one page of GET .../chat_conversations.
+ *
+ * Returns {ok:true, items} or {ok:false, kind, detail}. Same discipline as
+ * validateConversation: a response that is not the expected shape is a SHAPE
+ * failure, never an empty list. "You have no conversations" and "the API
+ * changed" must not look alike. */
+function normalizeListPage(json) {
+  if (!Array.isArray(json)) {
+    return {
+      ok: false,
+      kind: "shape",
+      detail: "chat_conversations did not return an array",
+    };
+  }
+  const items = [];
+  for (const raw of json) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
+    const uuid = String(raw.uuid || "").toLowerCase();
+    if (!CONV_UUID_RE.test(uuid)) continue;
+    items.push({
+      uuid,
+      name: String(raw.name || "").trim() || "(untitled)",
+      updated_at: String(raw.updated_at || ""),
+      project_uuid: raw.project_uuid || null,
+    });
+  }
+  if (json.length && !items.length) {
+    // A full page that yielded nothing usable is a shape change wearing an
+    // empty list as a disguise.
+    return {
+      ok: false,
+      kind: "shape",
+      detail: "chat_conversations returned rows with no usable uuid field",
+    };
+  }
+  return { ok: true, items };
+}
+
+/* Most recent first. Undated rows sort last rather than pretending to be old. */
+function sortByUpdatedDesc(items) {
+  return items.slice().sort((a, b) => {
+    const x = a.updated_at || "";
+    const y = b.updated_at || "";
+    if (x === y) return a.name.localeCompare(b.name);
+    if (!x) return 1;
+    if (!y) return -1;
+    return x < y ? 1 : -1;
+  });
+}
+
+/* Label a row against what the KB already holds.
+ *
+ *   new       not indexed at all
+ *   grown     indexed, but the conversation has changed since
+ *   indexed   indexed and unchanged since
+ *
+ * "grown" is inferred from updated_at, which is the only signal the LIST
+ * endpoint offers - it carries no message count. So it means "changed since it
+ * was indexed", which is a useful hint and not a promise: a capture may still
+ * come back SKIPPED if the change did not alter indexable text, or PARTIAL if
+ * it somehow holds fewer messages. The label exists to stop selection being
+ * guesswork, not to predict the outcome. */
+function classifyRow(item, indexed) {
+  const rec = indexed && indexed[item.uuid];
+  if (!rec) return "new";
+  const seen = String(rec.updated_at || "");
+  const now = String(item.updated_at || "");
+  if (now && seen && now > seen) return "grown";
+  return "indexed";
+}
+
+function annotateRows(items, indexed) {
+  return sortByUpdatedDesc(items).map((it) =>
+    Object.assign({}, it, {
+      state: classifyRow(it, indexed),
+      msg_count: (indexed && indexed[it.uuid] && indexed[it.uuid].msg_count) || 0,
+    })
+  );
+}
+
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     CONV_UUID_RE,
@@ -170,5 +252,9 @@ if (typeof module !== "undefined" && module.exports) {
     validateConversation,
     buildEnvelope,
     captureFilename,
+    normalizeListPage,
+    sortByUpdatedDesc,
+    classifyRow,
+    annotateRows,
   };
 }
