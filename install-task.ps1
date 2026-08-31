@@ -50,6 +50,84 @@ function Invoke-Schtasks {
   return @{ Code = $LASTEXITCODE; Text = ($text -join "`n") }
 }
 
+# Principals that run without anyone being logged on. If the task runs as one of
+# these, an interactive session is irrelevant.
+$script:ServicePrincipals = @("system", "localsystem", "local service",
+                              "network service")
+
+function Get-AccountLeaf {
+  # "HOST\alice", "alice" and "alice@example.com" are the same account here.
+  # schtasks reports the bare name while the interactive session reports a
+  # qualified one, so comparing them raw produces a false failure on a machine
+  # that is working perfectly.
+  param([string]$Account)
+  if (-not $Account) { return "" }
+  $a = $Account.Trim()
+  if ($a.Contains("\")) { $a = $a.Substring($a.LastIndexOf("\") + 1) }
+  if ($a.Contains("@")) { $a = $a.Substring(0, $a.IndexOf("@")) }
+  return $a.ToLowerInvariant()
+}
+
+function Test-TaskCanFire {
+  <#
+    Can this task actually run, or is it registered and inert?
+
+    schtasks creates a task with Logon Mode "Interactive only" unless it is
+    given stored credentials. Such a task runs ONLY while its run-as account is
+    logged on interactively. Register as an account that is not the interactive
+    user and the task is created cleanly, verifies cleanly, and then never
+    fires - a silent stall, which is the failure mode this project keeps
+    finding.
+
+    Returns @{ Status = "ok" | "warn" | "fail"; Message = "..." }.
+  #>
+  param(
+    [string]$LogonMode,
+    [string]$RunAsUser,
+    [string]$InteractiveUser
+  )
+
+  $runLeaf = Get-AccountLeaf $RunAsUser
+  $intLeaf = Get-AccountLeaf $InteractiveUser
+
+  if ($runLeaf -and ($script:ServicePrincipals -contains $runLeaf)) {
+    return @{ Status = "ok"
+              Message = "runs as the service principal '$RunAsUser', which does not need an interactive session." }
+  }
+
+  if (-not $LogonMode) {
+    return @{ Status = "warn"
+              Message = "could not read the task's Logon Mode, so whether it can fire is unverified." }
+  }
+
+  # Anything other than "Interactive only" - normally "Interactive/Background" -
+  # runs whether or not anyone is logged on.
+  if ($LogonMode -notmatch "Interactive only") {
+    return @{ Status = "ok"
+              Message = "Logon Mode is '$LogonMode', so it runs whether or not anyone is logged on." }
+  }
+
+  if (-not $intLeaf) {
+    return @{ Status = "warn"
+              Message = ("Logon Mode is 'Interactive only' and the interactive user could not be " +
+                         "determined, so whether this task can fire is UNVERIFIED. It will run only " +
+                         "while '$RunAsUser' is logged on interactively.") }
+  }
+
+  if ($runLeaf -ne $intLeaf) {
+    return @{ Status = "fail"
+              Message = ("the task is registered to run as '$RunAsUser' with Logon Mode " +
+                         "'Interactive only', but the interactive user is '$InteractiveUser'. " +
+                         "It will NEVER FIRE: an interactive-only task runs only while its own " +
+                         "account is logged on interactively.") }
+  }
+
+  return @{ Status = "warn"
+            Message = ("Logon Mode is 'Interactive only', so the task runs only while " +
+                       "'$RunAsUser' is logged on. It will NOT run at its scheduled time if " +
+                       "that account is logged off.") }
+}
+
 if (-not $ScriptsDir) {
   $ScriptsDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 }
@@ -73,6 +151,19 @@ if (-not $TaskName) {
   if ($env:CLAUDE_KB_TASK) { $TaskName = $env:CLAUDE_KB_TASK }
   elseif ($cfgObj -and $cfgObj.task) { $TaskName = $cfgObj.task }
   else { $TaskName = "ClaudeKB-Ingest" }
+}
+
+# The log lives under the KB ROOT, which is a different directory from the
+# scripts - the recommended layout keeps the working directory outside the repo
+# precisely so a stray `git add .` cannot publish the database. Reporting
+# <scripts>/ingest.log would send someone to a path that does not exist.
+$KbRoot = $null
+if ($env:CLAUDE_KB_ROOT) { $KbRoot = $env:CLAUDE_KB_ROOT }
+elseif ($cfgObj -and $cfgObj.root) { $KbRoot = $cfgObj.root }
+if ($KbRoot) {
+  $LogPath = Join-Path $KbRoot "ingest.log"
+} else {
+  $LogPath = "<root>\ingest.log  (root is not configured yet - see config.json)"
 }
 
 if ($Uninstall) {
@@ -138,9 +229,61 @@ if ($verify.Text -notmatch "kb_ingest\.py") {
 Write-Host ("[OK] Scheduled task '{0}' created" -f $TaskName)
 Write-Host ("     runs      {0}" -f $run)
 Write-Host ("     schedule  daily at {0}" -f $Time)
+
+# ---- can it actually fire? -----------------------------------------------
+# Verifying the command line proves the task would do the right thing IF it ran.
+# It says nothing about whether it CAN run. Those are different questions and
+# only one of them was being asked.
+function Get-TaskField {
+  param([string]$Text, [string]$Field)
+  foreach ($line in ($Text -split "`n")) {
+    if ($line -match ("^\s*" + [regex]::Escape($Field) + "\s*:\s*(.+?)\s*$")) {
+      return $Matches[1]
+    }
+  }
+  return ""
+}
+
+$logonMode = Get-TaskField $verify.Text "Logon Mode"
+$runAsUser = Get-TaskField $verify.Text "Run As User"
+$interactive = ""
+try {
+  $interactive = (Get-CimInstance Win32_ComputerSystem -ErrorAction Stop).UserName
+} catch {
+  $interactive = ""
+}
+
+Write-Host ("     runs as   {0}" -f $(if ($runAsUser) { $runAsUser } else { "(not reported)" }))
+Write-Host ("     logon     {0}" -f $(if ($logonMode) { $logonMode } else { "(not reported)" }))
+
+$fire = Test-TaskCanFire -LogonMode $logonMode -RunAsUser $runAsUser -InteractiveUser $interactive
+Write-Host ""
+switch ($fire.Status) {
+  "ok" {
+    Write-Host ("[OK] The task can fire: {0}" -f $fire.Message)
+  }
+  "warn" {
+    Write-Host ("[!] {0}" -f $fire.Message)
+  }
+  "fail" {
+    Write-Host ("[X] THE TASK CANNOT FIRE - {0}" -f $fire.Message)
+    Write-Host ""
+    Write-Host "    The task exists, so nothing is half-created, but it will not run"
+    Write-Host "    on its schedule and kb_open.py will not be able to trigger it."
+    Write-Host ""
+    Write-Host "    Fix it either way:"
+    Write-Host "      - re-run this script while logged in as the account that should"
+    Write-Host "        run the task, or"
+    Write-Host "      - give the task stored credentials so it does not need an"
+    Write-Host "        interactive session:"
+    Write-Host ("          schtasks /change /tn `"{0}`" /ru <user> /rp <password>" -f $TaskName)
+    throw "Registered a task that cannot fire - see above."
+  }
+}
+
 Write-Host ""
 Write-Host "Run it once now to confirm it works:"
 Write-Host ("    schtasks /run /tn `"{0}`"" -f $TaskName)
-Write-Host ("Then check the last line of {0}\ingest.log" -f $ScriptsDirAbs)
+Write-Host ("Then check the last line of {0}" -f $LogPath)
 Write-Host "With an empty incoming/ it should say 'no new export' - that is a"
 Write-Host "clean result, not a failure."

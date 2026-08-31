@@ -745,7 +745,22 @@ def _make_server(host="127.0.0.1", port=8760, http=False):
     Shared by the stdio (`mcp`) and streamable-http (`http`) modes.
     NOTE: never print to stdout — in stdio mode it carries the MCP protocol.
     """
-    from mcp.server.fastmcp import FastMCP
+    # This project targets the mcp 1.x API. mcp 2.x renamed/removed
+    # mcp.server.fastmcp.FastMCP, and the resulting ImportError reads like a bug
+    # in this project rather than what it is - a version mismatch - so name it.
+    try:
+        from mcp.server.fastmcp import FastMCP
+    except ImportError as e:
+        try:
+            import importlib.metadata as _md
+            installed = _md.version("mcp")
+        except Exception:
+            installed = "unknown"
+        raise ImportError(
+            "could not import FastMCP from the 'mcp' package (installed: %s).\n"
+            "  This project needs mcp 1.x: 2.x renamed that API.\n"
+            "  Fix with:  pip install \"mcp<2\"   (or: pip install -r requirements.txt)\n"
+            "  Original error: %s" % (installed, e)) from e
 
     if http:
         # stateless + JSON responses: each HTTP request is self-contained

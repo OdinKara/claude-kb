@@ -111,7 +111,7 @@ repeat them.
 | for | you need |
 |---|---|
 | indexing and searching from the CLI | Python 3.10+, standard library only |
-| the MCP server modes (`mcp`, `http`) | `pip install mcp` |
+| the MCP server modes (`mcp`, `http`) | `pip install -r requirements.txt` (pins `mcp<2`) |
 | packing a Desktop extension *(optional)* | Node.js, for the `mcpb` CLI |
 
 Only the first row is mandatory. Nothing about indexing or searching needs a
@@ -249,6 +249,22 @@ quoted (either can contain spaces - getting that wrong is the classic way this
 task ends up created but broken), then **queries the task back and checks it
 really runs `kb_ingest.py`** rather than trusting the exit code.
 
+It also checks the task can actually **run**, not just that it would do the right
+thing if it did. A task created without stored credentials has Logon Mode
+*Interactive only*, meaning it runs only while its own account is logged on
+interactively:
+
+- registered as **the interactive user** - works, but it will **not** run at its
+  scheduled time if you are logged off. The installer says so.
+- registered as **some other account** - it will never fire. The installer fails
+  loudly rather than reporting success, and names the fix.
+
+To have it run regardless of who is logged on, give it stored credentials:
+
+```powershell
+schtasks /change /tn "ClaudeKB-Ingest" /ru <user> /rp <password>
+```
+
 Confirm it works:
 
 ```powershell
@@ -302,7 +318,8 @@ The whole path, start to finish. Steps 1-4 are covered under
 1. `git clone` this repo and `cd` into it.
 2. `cp config.example.json config.json`, then set `root` to your KB working
    directory.
-3. `pip install mcp` - needed to serve the index, not to build it.
+3. `pip install -r requirements.txt` - needed to serve the index, not to
+   build it. It pins `mcp<2`; see [Prerequisites](#prerequisites).
 4. Index an export: `python claude_kb.py update <export-dir|zip>`. Confirm with
    `python claude_kb.py search "some term"`.
 5. **Create the ingest task** - see
@@ -556,7 +573,8 @@ browser extension cannot write to a folder or start a process.
 1. `git clone` this repo and `cd` into it.
 2. `cp config.example.json config.json`, then set `root` to your KB working
    directory.
-3. `pip install mcp` *(only needed to serve the index to Claude, not to capture)*.
+3. `pip install -r requirements.txt` *(only needed to serve the index to
+   Claude, not to capture)*.
 4. Build the index from an export: `python claude_kb.py update <export-dir|zip>`.
    Confirm with `python claude_kb.py search "some term"`. **Do this first** -
    without an index the extension cannot label anything as already captured.

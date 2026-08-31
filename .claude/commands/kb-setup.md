@@ -21,8 +21,11 @@ Check and report the whole picture before starting, so the user is not told abou
 a missing dependency three steps in:
 
 - `python --version` - 3.10+ required.
-- `python -c "import mcp"` - needed only to serve the index to Claude. Absent is
-  fine for now; note it.
+- `python -c "import mcp.server.fastmcp"` - needed only to serve the index to
+  Claude. Absent is fine for now; note it. If `mcp` is installed but that import
+  FAILS, they have mcp 2.x, which renamed the API: the fix is
+  `pip install -r requirements.txt`, which pins `mcp<2`. Check the import, not
+  just the package.
 - `node --version` - needed only to pack a `.mcpb`. **Absent is not a blocker**:
   README's *Route B* registers the MCP server directly in
   `claude_desktop_config.json`. Say which route you will take.

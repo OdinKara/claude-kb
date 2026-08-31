@@ -63,8 +63,10 @@ Stop and ask rather than claiming these are done or pretending to do them:
 ## Check before starting, and report what you find
 
 - **Python 3.10+** - required for everything.
-- **`pip install mcp`** - only to serve the index to Claude, not to index or
-  capture.
+- **`pip install -r requirements.txt`** - only to serve the index to Claude,
+  not to index or capture. It pins `mcp<2` on purpose: 2.x renamed the API
+  this project builds on, and an unpinned install fails with an ImportError
+  that reads like a bug here.
 - **Node** - only to pack a `.mcpb`. If it is missing or npm is blocked by
   policy, do not treat setup as blocked: README's **Route B** registers the
   server directly in `claude_desktop_config.json` and needs no Node at all.
