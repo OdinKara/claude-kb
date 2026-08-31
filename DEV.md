@@ -258,6 +258,34 @@ functions were on the indexing path - but running `build` from that copy would
 have indexed ZERO project docs from a multi-part export, with no error. Two
 copies of a file that must agree will not stay in agreement.
 
+### An installed extension lagging the built bundle is not that problem
+
+Building the bundle and installing it are separate acts: `build_extension.py`
+regenerates `kb-extension/build/`, and Claude Desktop keeps serving whatever was
+last installed until someone installs the new one. So after any change to
+`claude_kb.py` the installed extension is a step behind on purpose, until you
+choose to reinstall.
+
+That is a different thing from the drift above, and worth keeping straight. The
+drift was two source files that were both supposed to be current and silently
+were not. This is one source file, plus a deployed artifact whose version is
+known and chosen.
+
+What decides whether it matters is which code path changed:
+
+    the serving path      _ro_conn, kb_search, kb_get_conversation, make_match
+                          -> reinstall, or Desktop keeps answering with the old
+                             behaviour
+
+    the ingest path       update, update-web, upsert_conversations, the reader
+                          -> the extension never calls any of it. Reinstalling
+                             changes nothing about what Desktop does today.
+
+A run of related changes to the ingest path can therefore be batched behind a
+single reinstall at the end. Keep the bundle rebuilt and hash-verified against
+the repo and the working install each time regardless, so the only variable is
+when the install happens - never whether the bytes agree.
+
 ## Gotchas
 
 - Never edit or grep these files with Windows PowerShell 5.1. It reads BOM-less
