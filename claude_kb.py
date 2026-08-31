@@ -98,9 +98,19 @@ def load_json(path):
 
 # ── shared parsing + upsert helpers (used by build AND update) ───────────────
 def _conv_messages(c):
-    """Return [(text, role, created_at)] for indexable messages, in order."""
+    """Return [(text, role, created_at)] for indexable messages, in order.
+
+    THE definition of what counts as an indexable message, and therefore of
+    msg_count. Every writer must count through this - see _should_replace.
+
+    Non-dict entries are skipped rather than crashing: this runs over data from
+    outside the official export, where one malformed entry must not take down
+    the batch it arrived in.
+    """
     out = []
     for m in (c.get("chat_messages") or c.get("messages") or []):
+        if not isinstance(m, dict):
+            continue
         role = m.get("sender") or m.get("role") or ""
         if role not in ("human", "assistant"):
             continue
@@ -512,7 +522,19 @@ def _read_web_export(path):
     Rejects rather than half-ingests. A capture that cannot be trusted is worth
     less than no capture: it would land as a PARTIAL at best, and at worst as a
     plausible-looking replacement.
+
+    Never raises. Anything unexpected becomes a REJECTED line, because a capture
+    that crashes the reader would abort the whole batch it arrived in - taking
+    the good captures beside it down too - and kb_ingest would then leave every
+    file in incoming/ to be retried, forever, at 06:00.
     """
+    try:
+        return _read_web_export_inner(path)
+    except Exception as e:                       # noqa: BLE001 - deliberate
+        return _reject(path, f"unreadable ({type(e).__name__}: {e})")
+
+
+def _read_web_export_inner(path):
     try:
         obj = load_json(path)
     except (OSError, ValueError, UnicodeDecodeError) as e:
@@ -533,8 +555,30 @@ def _read_web_export(path):
                              f" (this build reads {WEB_FORMAT_VERSION})")
 
     conv = obj.get("conversation")
-    if not isinstance(conv, dict) or not (conv.get("uuid") or "").strip():
+    if not isinstance(conv, dict):
+        return _reject(path, "no conversation object")
+    conv_uuid = (conv.get("uuid") or "").strip()
+    if not conv_uuid:
         return _reject(path, "no conversation.uuid")
+
+    # The envelope carries the uuid the capture was TAKEN FOR - the one in the
+    # page URL - and the conversation object carries the uuid the API actually
+    # answered with. They must agree. A mismatch means the capture is filed
+    # under the wrong identity, and since that identity is the primary key the
+    # official export also uses, ingesting it would corrupt a real conversation
+    # with another one's messages. There is no safe way to guess which of the
+    # two is right, so refuse.
+    env_uuid = (obj.get("conversation_uuid") or "").strip()
+    if not env_uuid:
+        return _reject(path, "no envelope conversation_uuid")
+    if env_uuid != conv_uuid:
+        return _reject(path, f"uuid mismatch: envelope {env_uuid}"
+                             f" != conversation {conv_uuid}")
+
+    # current_leaf_message_uuid may be present. It is METADATA ONLY and is
+    # deliberately not read here: pruning a capture to the active path would
+    # make every forked conversation capture short, and 15% of them are forked,
+    # so each would be rejected as PARTIAL forever. Capture the whole tree.
 
     msgs = conv.get("chat_messages")
     if not isinstance(msgs, list) or not msgs:
@@ -560,11 +604,31 @@ def update_web(paths):
     """
     conns = []
     good = []
+    seen = {}
     for p in paths:
         conv = _read_web_export(p)
-        if conv is not None:
-            conns.append(conv)
-            good.append(p)
+        if conv is None:
+            continue
+        uuid = conv.get("uuid")
+        if uuid in seen:
+            # Two captures of one conversation in a single run. Upserting both
+            # would have the second compared against the first's freshly stored
+            # count, which is a comparison against this run rather than against
+            # the index. Keep the longer and say so.
+            other, other_n = seen[uuid]
+            this_n = len(_conv_messages(conv))
+            if this_n <= other_n:
+                _reject(p, f"duplicate of {os.path.basename(other)} in this run"
+                           f" ({this_n} messages vs {other_n}) - keeping the longer")
+                continue
+            _reject(other, f"superseded by {os.path.basename(p)} in this run"
+                           f" ({other_n} messages vs {this_n})")
+            idx = good.index(other)
+            good.pop(idx)
+            conns.pop(idx)
+        conns.append(conv)
+        good.append(p)
+        seen[uuid] = (p, len(_conv_messages(conv)))
 
     conn = sqlite3.connect(DB)
     try:
@@ -742,8 +806,17 @@ if __name__ == "__main__":
         build()
     elif len(sys.argv) >= 3 and sys.argv[1] == "update":
         update(sys.argv[2])
-    elif len(sys.argv) >= 3 and sys.argv[1] == "update-web":
-        ok, ingested = update_web(sys.argv[2:])
+    elif len(sys.argv) >= 2 and sys.argv[1] == "update-web":
+        files = sys.argv[2:]
+        if not files:
+            print("usage: claude_kb.py update-web <capture.json> [...]")
+            sys.exit(2)
+        missing = [f for f in files if not os.path.isfile(f)]
+        if missing:
+            for f in missing:
+                print(f"ERROR: no such file: {f}")
+            sys.exit(2)
+        ok, ingested = update_web(files)
         # Name what was actually ingested so the caller archives only those.
         for p in ingested:
             print(f"INGESTED {p}")

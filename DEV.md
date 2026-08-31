@@ -192,7 +192,7 @@ the exact failure shape this codebase keeps running into.
 **The counts must come from the same normalizer.** `msg_count` is the length of
 `_conv_messages()` output, not `len(chat_messages)`: messages that are neither
 `human` nor `assistant`, and messages whose content flattens to nothing, are
-dropped. Across one real export that filter removes 114 of 17,557 messages. A
+dropped. Across one real export that filter removes about 0.6% of messages. A
 count taken before that filter is not comparable to a stored one, and the guard
 silently degrades into a coin flip. Any future writer must count through
 `_conv_messages`.
@@ -219,13 +219,55 @@ straight into `_conv_messages` untranslated - which is also what guarantees the
 capture is counted by the same normalizer the export is, without which the
 shrink guard above compares two numbers that do not mean the same thing.
 
+The envelope:
+
+    {
+      "format": "claude-kb-web-export",
+      "format_version": 1,
+      "captured_at": "<iso8601>",
+      "source": "web_export",
+      "conversation_uuid": "<uuid from the page URL>",
+      "current_leaf_message_uuid": "<metadata only - see below>",
+      "conversation": { ...the API's conversation object, verbatim... }
+    }
+
+`conversation_uuid` is the identity the capture was TAKEN FOR - the uuid in the
+page URL - and `conversation.uuid` is the identity the API answered with. Both
+are required and must agree. A mismatch means the capture is filed under the
+wrong identity, and since that identity is the primary key the official export
+also uses, ingesting it would corrupt a real conversation with a different one's
+messages. Nothing can determine which of the two is correct from the outside, so
+the capture is refused rather than guessed at.
+
+`current_leaf_message_uuid` is METADATA ONLY and is deliberately never read.
+Pruning a capture to the active path would make every forked conversation
+capture short - and 15% of conversations in one real export contain a fork, some
+of them hundreds of messages long. Each would then be rejected as PARTIAL
+forever, by a guard doing its job against a capture that was wrong by design.
+Capture the whole tree; the export ships the whole tree too, which is what makes
+the two counts comparable.
+
 A capture is refused outright rather than half-ingested, because a capture that
 cannot be trusted is worth less than no capture at all: wrong format, a
-`format_version` this build does not read, no `conversation.uuid`, no
+`format_version` this build does not read, no conversation object, no
+`conversation.uuid`, a missing or mismatched envelope `conversation_uuid`, no
 `chat_messages`, no indexable messages, or ANY message flagged `truncated`. A
 truncated message means the source returned incomplete text - the count matches
 but the content does not, so it would churn `UPDATED` forever while degrading
 what is indexed.
+
+**The reader never raises.** Anything unexpected becomes a REJECTED line. This
+is not defensive habit: a capture that crashed the reader would abort the whole
+batch it arrived in, taking the good captures beside it down, and `kb_ingest.py`
+would then leave every file in `incoming/` to be retried at 06:00 - forever,
+because the poison pill is retried along with them. `_conv_messages` skips
+non-dict entries for the same reason; one malformed message must not cost a
+batch.
+
+Two captures of one conversation in a single run are resolved before the upsert,
+keeping the longer and rejecting the other with a reason. Otherwise the second
+would be compared against the first's freshly written count - a comparison
+against this run rather than against the index.
 
 Two disposals, deliberately different:
 
