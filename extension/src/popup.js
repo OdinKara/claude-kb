@@ -14,6 +14,18 @@ const CAPTURE_REASONS = {
     "Not signed in",
     "claude.ai answered as if logged out. Sign in in this browser and try again.",
   ],
+  forbidden: [
+    "Not permitted - and you ARE signed in",
+    "claude.ai answered 403: the request was understood and refused. This is " +
+      "not a session problem, so do not go looking at your login. It usually " +
+      "means an organisation that cannot serve this endpoint was used.",
+  ],
+  no_chat_org: [
+    "No chat organisation on this account",
+    "None of the organisations this account belongs to has the 'chat' " +
+      "capability, so none of them holds conversations. An API-only account " +
+      "looks exactly like this.",
+  ],
   shape: [
     "The API shape has changed",
     "The response came back but not in the form this extension understands. " +

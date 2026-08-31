@@ -159,6 +159,139 @@ function captureFilename(date) {
   );
 }
 
+/* ------------------------------------------------------- organisations */
+
+/* Pick the organisation(s) that can actually serve chat conversations.
+ *
+ * An account can hold more than one organisation - a Claude subscription and an
+ * API console account, say - and only the one with the "chat" capability owns
+ * conversations. The API org does not have them and never will: it answers
+ * chat_conversations with 403 permission_error, by design.
+ *
+ * So selection is BY CAPABILITY, never by position in the array and never by
+ * hardcoding a uuid. Where several qualify, they are returned sorted by uuid so
+ * the choice is deterministic and does not silently depend on the order the API
+ * happened to return.
+ *
+ * Returns {ok:true, orgs:[uuid,...]} or {ok:false, kind, detail}. "No chat
+ * organisation" is its own named failure - it is not an authentication problem
+ * and must never be reported as one.
+ */
+function selectChatOrgs(raw) {
+  if (!Array.isArray(raw)) {
+    return { ok: false, kind: "shape", detail: "/api/organizations did not return an array" };
+  }
+
+  const orgs = [];
+  let sawCapabilities = false;
+  for (const o of raw) {
+    if (!o || typeof o !== "object" || Array.isArray(o)) continue;
+    const uuid = String(o.uuid || "").trim();
+    if (!uuid) continue;
+    const caps = Array.isArray(o.capabilities)
+      ? o.capabilities.map((c) => String(c || "").toLowerCase())
+      : null;
+    if (caps) sawCapabilities = true;
+    orgs.push({ uuid, caps: caps || [] });
+  }
+
+  if (!orgs.length) {
+    return {
+      ok: false,
+      kind: "shape",
+      detail: "/api/organizations returned no organisation uuids",
+    };
+  }
+
+  // If NOT ONE organisation carries a capabilities array, the field has gone,
+  // which is a shape change - distinct from an account that genuinely has no
+  // chat organisation.
+  if (!sawCapabilities) {
+    return {
+      ok: false,
+      kind: "shape",
+      detail:
+        "no organisation carried a capabilities array - the API shape has changed",
+    };
+  }
+
+  const chat = orgs
+    .filter((o) => o.caps.includes("chat"))
+    .map((o) => o.uuid)
+    .sort();
+
+  if (!chat.length) {
+    return {
+      ok: false,
+      kind: "no_chat_org",
+      detail:
+        "none of the " +
+        orgs.length +
+        " organisation(s) on this account has the 'chat' capability, so none " +
+        "of them holds conversations",
+    };
+  }
+  return { ok: true, orgs: chat, skipped: orgs.length - chat.length };
+}
+
+/* ------------------------------------------------------- HTTP classification */
+
+/* Turn one HTTP outcome into a named failure, or {ok:true}.
+ *
+ * Pure and separately testable on purpose: the first real run of the extension
+ * reported a 403 permission_error as "not signed in", which sent someone to
+ * check a session that was fine. A classifier that cannot be tested is a
+ * classifier that gets to be wrong quietly.
+ *
+ *   401                     auth        the session is not authenticated
+ *   403 + permission_error  forbidden   authenticated, but NOT PERMITTED
+ *   HTML body               auth        a login page wearing a 200
+ *   404                     notfound
+ *   other non-2xx           transport
+ */
+function classifyResponse(status, contentType, bodyText) {
+  const ctype = String(contentType || "").toLowerCase();
+
+  if (status === 401) {
+    return { ok: false, kind: "auth", detail: "HTTP 401 - the session is not authenticated" };
+  }
+
+  if (status === 403) {
+    // 403 means the request was understood and refused, which is a different
+    // fact from "you are logged out". Name the refusal if the body names it.
+    let errType = "";
+    try {
+      const body = JSON.parse(bodyText || "{}");
+      errType = String((body && body.error && body.error.type) || "");
+    } catch (_e) {
+      /* an unparseable body does not change what 403 means */
+    }
+    return {
+      ok: false,
+      kind: "forbidden",
+      detail:
+        "HTTP 403" +
+        (errType ? " " + errType : "") +
+        " - authenticated, but this organisation is not permitted to use this endpoint",
+      errorType: errType,
+    };
+  }
+
+  if (ctype.includes("text/html")) {
+    return { ok: false, kind: "auth", detail: "the API returned HTML, which means a login page" };
+  }
+
+  if (status === 404) {
+    return { ok: false, kind: "notfound", detail: "HTTP 404 - no such conversation for this account" };
+  }
+
+  if (status < 200 || status >= 300) {
+    return { ok: false, kind: "transport", detail: "HTTP " + status };
+  }
+
+  return { ok: true };
+}
+
 /* ------------------------------------------------------------------ listing */
 
 /* Normalise one page of GET .../chat_conversations.
@@ -256,5 +389,7 @@ if (typeof module !== "undefined" && module.exports) {
     sortByUpdatedDesc,
     classifyRow,
     annotateRows,
+    selectChatOrgs,
+    classifyResponse,
   };
 }

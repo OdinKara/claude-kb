@@ -52,44 +52,42 @@ async function getJson(url) {
     throw fail("transport", `${e.name}: ${e.message}`);
   }
 
-  if (res.status === 401 || res.status === 403) {
-    throw fail("auth", `HTTP ${res.status} - the session is not authenticated`);
-  }
-  // A login redirect answers 200 with HTML rather than JSON. Treating that as a
-  // shape change would send someone hunting an API break when they are simply
-  // logged out.
-  const ctype = (res.headers.get("content-type") || "").toLowerCase();
-  if (ctype.includes("text/html")) {
-    throw fail("auth", "the API returned HTML, which means a login page");
-  }
-  if (res.status === 404) {
-    throw fail("notfound", "HTTP 404 - no such conversation for this account");
-  }
-  if (!res.ok) {
-    throw fail("transport", `HTTP ${res.status}`);
+  // Read the body once, up front: a 403's body is what distinguishes "not
+  // permitted" from anything else, and it cannot be read after the fact.
+  let text = "";
+  try {
+    text = await res.text();
+  } catch (e) {
+    throw fail("transport", `could not read the response body (${e.message})`);
   }
 
-  let json;
+  const verdict = classifyResponse(
+    res.status,
+    res.headers.get("content-type"),
+    text
+  );
+  if (!verdict.ok) {
+    throw fail(verdict.kind, verdict.detail, { errorType: verdict.errorType });
+  }
+
   try {
-    json = await res.json();
+    return JSON.parse(text);
   } catch (e) {
     throw fail("shape", `response was not JSON (${e.message})`);
   }
-  return json;
 }
 
-async function listOrganizations() {
+/* Resolve the organisation(s) that can serve conversations.
+ *
+ * Every path that needs an org goes through here - the single capture, the
+ * list, and the bulk run - so none of them can end up selecting differently.
+ * The single path worked before by luck of array order; that is not a property
+ * worth relying on. */
+async function chatOrgs() {
   const json = await getJson("/api/organizations");
-  if (!Array.isArray(json)) {
-    throw fail("shape", "/api/organizations did not return an array");
-  }
-  const orgs = json
-    .map((o) => (o && typeof o === "object" ? String(o.uuid || "") : ""))
-    .filter(Boolean);
-  if (!orgs.length) {
-    throw fail("shape", "/api/organizations returned no organisation uuids");
-  }
-  return orgs;
+  const picked = selectChatOrgs(json);
+  if (!picked.ok) throw fail(picked.kind, picked.detail);
+  return picked.orgs;
 }
 
 async function fetchConversation(orgUuid, convUuid) {
@@ -111,9 +109,9 @@ async function fetchConversation(orgUuid, convUuid) {
 async function captureOne(convUuid, orgs, seq) {
   let conversation = null;
   let lastError = null;
-  // The account may have several organisations and only one owns this chat.
-  // Try each rather than hardcoding one; a 404 from the wrong org is expected,
-  // not an error worth reporting.
+  // `orgs` is already filtered to chat-capable organisations, in a
+  // deterministic order. Where more than one qualifies, a 404 from the wrong
+  // one is expected and worth moving past; anything else is not.
   for (const org of orgs) {
     try {
       conversation = await fetchConversation(org, convUuid);
@@ -158,7 +156,7 @@ async function captureActive() {
   }
   let orgs;
   try {
-    orgs = await listOrganizations();
+    orgs = await chatOrgs();
   } catch (e) {
     return e.kind ? e : fail("transport", String(e));
   }
@@ -170,7 +168,7 @@ async function captureActive() {
 async function listConversations() {
   let orgs;
   try {
-    orgs = await listOrganizations();
+    orgs = await chatOrgs();
   } catch (e) {
     return e.kind ? e : fail("transport", String(e));
   }
@@ -225,7 +223,7 @@ async function listConversations() {
 async function captureMany(uuids) {
   let orgs;
   try {
-    orgs = await listOrganizations();
+    orgs = await chatOrgs();
   } catch (e) {
     return e.kind ? e : fail("transport", String(e));
   }
@@ -262,10 +260,15 @@ async function captureMany(uuids) {
       continue;
     }
     failed.push({ uuid, kind: res.kind, detail: res.detail });
-    // auth and shape will repeat for every remaining conversation. Hammering
-    // the endpoint to collect identical failures is exactly the behaviour the
-    // pacing exists to avoid.
-    if (res.kind === "auth" || res.kind === "shape") {
+    // These repeat for every remaining conversation - they are properties of
+    // the session or the account, not of one chat. Hammering the endpoint to
+    // collect identical failures is exactly what the pacing exists to avoid.
+    if (
+      res.kind === "auth" ||
+      res.kind === "shape" ||
+      res.kind === "forbidden" ||
+      res.kind === "no_chat_org"
+    ) {
       stoppedBy = res.kind;
       for (const rest of wanted.slice(i + 1)) {
         failed.push({

@@ -450,9 +450,38 @@ like part of the system but are never ingested - a reading feature wearing a
 search feature's clothes. If you want a conversation as prose, the index already
 has the text.
 
+### Choosing the organisation
+
+An account can hold more than one organisation. A Claude subscription plus API
+console access is the ordinary case, and only the subscription org has the
+`chat` capability - the API org answers `chat_conversations` with **403
+permission_error**, by design, and always will.
+
+`selectChatOrgs()` therefore picks **by capability**, never by position in the
+array and never by a hardcoded uuid. Where several qualify they are returned
+sorted by uuid, so the choice is deterministic rather than quietly dependent on
+whatever order the API happened to return. Every path that needs an org - single
+capture, list, bulk run - goes through the one resolver, so none of them can
+select differently from the others.
+
+Three distinct failures, deliberately not merged:
+
+    no organisation has "chat"      no_chat_org  an API-only account looks
+                                                 exactly like this
+    no organisation has a
+    capabilities array at all       shape        the field is gone
+    the response is not an array    shape
+
+This was found on the first real run. Iterating organisations in array order
+reached the API org, and its 403 was reported as "not signed in" - which sent
+someone to check a session that was fine. The single-capture path happened to
+work, but only because of the order the array arrived in; that is not a property
+worth relying on, so it was moved onto the same resolver.
+
 ### Failures are classified, never collapsed
 
-`auth`, `shape`, `transport`, `notfound`, `mismatch`, `truncated`, `empty`. The
+`auth`, `forbidden`, `no_chat_org`, `shape`, `transport`, `notfound`,
+`mismatch`, `truncated`, `empty`. The
 endpoints are internal and unsupported - observed on one account, one browser,
 one day - so the interesting question when this breaks is *which* thing broke.
 "Could not export" answers nothing six months later.
@@ -461,6 +490,13 @@ The load-bearing distinction: **a missing `chat_messages` key is `shape`; an
 empty array is `empty`.** Conflating them would let an API change present as a
 conversation with no messages - and a capture of nothing, believed, is the
 failure that could replace a real conversation with nothing.
+
+The other one, learned the hard way: **`401` is `auth`; `403` is `forbidden`.**
+A 403 means the request was understood and refused - authenticated, but not
+permitted. Reporting it as "not signed in" is not a small imprecision, it is a
+wrong answer that costs someone an afternoon checking a session that was fine.
+`classifyResponse()` is pure and separately tested for exactly this reason: a
+classifier that cannot be tested is one that gets to be wrong quietly.
 
 ## The MCP extension is generated, not checked in
 
