@@ -388,11 +388,46 @@ fake DOM and a stubbed `chrome.*`. The suite is itself verified against a
 deliberately broken copy - a test that passes on both the broken and the fixed
 code proves nothing.
 
-Note what the smoke test has to assert on. The handler wraps its body in
-try/catch and RENDERS the error, so "did it throw" passes even when the feature
-is completely broken. The assertion that catches it is on what the user actually
-sees: the rendered text must not contain "is not defined", and the list must
-actually populate.
+## Two rules for tests here
+
+Both were paid for. Neither is a style preference.
+
+### Assert on rendered output, not on the absence of exceptions
+
+**Wherever the code under test catches its own errors, a smoke test that only
+asks "did it throw" is worthless.**
+
+On the deliberately broken copy of the extension, the assertions
+`the popup's scripts load without a ReferenceError` and `clicking it does not
+raise` both **PASSED** - while the feature was completely non-functional. The
+click handler wraps its body in try/catch and renders the failure, so the
+exception never reaches the test. What caught it was asserting on what the user
+would actually see: the rendered text must not contain "is not defined", and the
+list must have rows in it.
+
+This generalises past the extension. Anything with a try/catch, an error branch
+that logs and continues, or a function that returns a failure value instead of
+raising - `_read_web_export` returning `None`, `_reject`, the host answering
+`{ok:false}` rather than dying - has the same property. Test the OUTPUT the
+caller receives, not the absence of a crash. A component that is good at not
+crashing is very good at failing quietly.
+
+### Verify a new test against a deliberately broken copy
+
+**A test that passes on both the broken and the fixed code proves nothing**, and
+you cannot tell which kind you have written by reading it.
+
+So when a test is added for a specific defect, break the code on purpose - a
+copy in a scratch directory, never the working tree - and confirm the test fails
+there, with the failure the user reported. `test_wiring.js` takes a repo root as
+an argument for exactly this: it is run against the real tree and against a copy
+whose `popup.html` is missing the capture-core script tag, and it must pass the
+first and fail the second.
+
+Applied to the four bugs the tests caught earlier - the poison-pill batch abort,
+the PARTIAL-reported-as-INGESTED confusion, the org-order 403, the missing script
+tag - each one is a case where the passing test was written after seeing the
+failing one.
 
 **The fetch lives in the content script, not the service worker.** These
 requests must be same-origin to carry the session cookie. A content script on

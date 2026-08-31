@@ -154,6 +154,7 @@ const listEl = document.getElementById("list");
 const countsEl = document.getElementById("counts");
 const btnLoad = document.getElementById("load");
 const btnCapSel = document.getElementById("capsel");
+const btnCapSelSave = document.getElementById("capselsave");
 
 let rows = [];
 
@@ -161,10 +162,15 @@ function selected() {
   return Array.from(listEl.querySelectorAll("input:checked")).map((i) => i.value);
 }
 
+/* The list buttons carry the SAME labels as the single-conversation pair above,
+ * because they are the same two actions. A list button that just said "Capture
+ * selected" would leave you guessing which of the two it did. */
 function refreshSelection() {
   const n = selected().length;
   btnCapSel.disabled = n === 0;
-  btnCapSel.textContent = n ? `Capture selected (${n})` : "Capture selected";
+  btnCapSelSave.disabled = n === 0;
+  btnCapSel.textContent = n ? `Capture + Ingest (${n})` : "Capture + Ingest";
+  btnCapSelSave.textContent = n ? `Capture only (${n})` : "Capture only";
 }
 
 function renderList(annotated, note) {
@@ -222,7 +228,7 @@ function renderPerConversation(report) {
     const head = String(c.outcome || "").split(":")[0];
     o.className =
       "o " +
-      (head === "INGESTED" ? "o-ing"
+      (head === "INGESTED" || head === "SAVED" ? "o-ing"
         : head === "PARTIAL" ? "o-par"
         : head === "SKIPPED" ? "o-skp"
         : "o-rej");
@@ -250,12 +256,16 @@ function showRun(report) {
   const par = (report.partial || []).length;
   const skp = (report.skipped || []).length;
   const rej = (report.rejected || []).length;
+  const saved = (report.written || []).length;
   const notCaptured = report.failedCount || 0;
 
   const cls = rej || notCaptured ? "bad" : par ? "warn" : "ok";
   const head =
-    `${report.selected} selected: ${ing} ingested, ${par} PARTIAL, ` +
-    `${skp} unchanged, ${rej} refused, ${notCaptured} not captured`;
+    report.status === "saved"
+      ? `${report.selected} selected: ${saved} written to incoming, not ingested, ` +
+        `${notCaptured} not captured`
+      : `${report.selected} selected: ${ing} ingested, ${par} PARTIAL, ` +
+        `${skp} unchanged, ${rej} refused, ${notCaptured} not captured`;
   const why = report.stoppedBy
     ? `The run stopped early after a ${report.stoppedBy} failure. ` +
       `Conversations after that point were not attempted.`
@@ -308,21 +318,27 @@ document.getElementById("selnone").addEventListener("click", (e) => {
   refreshSelection();
 });
 
-btnCapSel.addEventListener("click", async () => {
+async function captureSelected(ingest) {
   const uuids = selected();
   busy(true);
   btnCapSel.disabled = true;
+  btnCapSelSave.disabled = true;
   outEl.classList.remove("hidden");
   render("warn", "Capturing...", `0 of ${uuids.length}. This is paced deliberately.`);
   try {
-    showRun(await chrome.runtime.sendMessage({ type: "capture_selected", uuids }));
+    showRun(
+      await chrome.runtime.sendMessage({ type: "capture_selected", uuids, ingest })
+    );
   } catch (e) {
     render("bad", "Extension error", String((e && e.message) || e));
   } finally {
     busy(false);
     refreshSelection();
   }
-});
+}
+
+btnCapSel.addEventListener("click", () => captureSelected(true));
+btnCapSelSave.addEventListener("click", () => captureSelected(false));
 
 chrome.runtime.onMessage.addListener((m) => {
   if (m && m.type === "capture_progress") {

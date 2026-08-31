@@ -453,12 +453,32 @@ adds a second, lighter one: a browser extension that captures the conversation
 you are reading straight into `incoming/`, so a chat is searchable without
 waiting for the next data export.
 
-> **These endpoints are internal and unsupported.** They were observed working on
-> one account, in one browser, on one day. That is a snapshot, not a spec. There
-> is no version header, no deprecation notice, and no promise they will exist
-> next month. The extension is built to *fail loudly and specifically* when they
-> change - see [What the popup is telling you](#what-the-popup-is-telling-you) -
-> and to write nothing when it cannot verify what it got.
+> **These endpoints are internal and undocumented.** They are what claude.ai's
+> own web app calls, observed working on one account, in one browser, on one
+> day. That is a snapshot, not a spec: no version header, no deprecation notice,
+> no promise they exist next month. **This is the part of the project most
+> likely to need fixing after a Claude web update** - the index, the ingest
+> pipeline and the search are unaffected by any of it.
+>
+> The extension is built to *fail loudly and specifically* when they change -
+> see [What the popup is telling you](#what-the-popup-is-telling-you) - and to
+> write nothing when it cannot verify what it got.
+
+> **Windows only.** The native host is a `.cmd` launcher and the installer is
+> PowerShell writing to the registry. macOS and Linux use a different mechanism
+> entirely (a JSON manifest in a per-browser directory), so neither is supported
+> yet. Everything else in this repo - indexing, search, the MCP server - is
+> cross-platform.
+>
+> **Chromium browsers only.** Chrome, Edge, Brave, Vivaldi and Opera share the
+> native-messaging manifest format and are all registered by the installer.
+> **Firefox is not supported**: it uses a different registry location *and* a
+> different manifest schema (`allowed_extensions` with an add-on id, rather than
+> `allowed_origins` with a `chrome-extension://` URL), and this extension
+> declares no Firefox id. The installer detects Firefox and says so rather than
+> writing something that cannot work. **Safari cannot work at all** - it uses a
+> different extension model that has no native-messaging equivalent of this
+> shape.
 
 ### Why there is no DOM fallback
 
@@ -469,34 +489,62 @@ input the ingest side's shrink guard rejects, so a scrape that *looked* complete
 would produce captures held back forever. Failing loudly beats degrading to a
 lossy method that can quietly damage the index.
 
-### Setup
+### From clone to capturing
 
-Three steps, in this order. The extension is useless without the native host,
-because a browser extension cannot write to a folder or start a process.
+The whole path. Steps 1-4 are the same ones as
+[From clone to searchable](#from-clone-to-searchable-in-claude); 5-9 are the
+capture path. The extension is useless without the native host, because a
+browser extension cannot write to a folder or start a process.
 
-**1. Load the extension.** In Chrome or Edge, open the extensions page, turn on
-developer mode, choose *Load unpacked*, and select the `extension/` directory.
-Copy the extension ID from its card.
+1. `git clone` this repo and `cd` into it.
+2. `cp config.example.json config.json`, then set `root` to your KB working
+   directory.
+3. `pip install mcp` *(only needed to serve the index to Claude, not to capture)*.
+4. Build the index from an export: `python claude_kb.py update <export-dir|zip>`.
+   Confirm with `python claude_kb.py search "some term"`. **Do this first** -
+   without an index the extension cannot label anything as already captured.
+5. **Put the repo where it will stay.** See the warning below; moving it later
+   breaks the registration.
+6. **Load the extension.** Open your browser's extensions page, turn on
+   developer mode, choose *Load unpacked*, and select the `extension/`
+   directory.
+7. **Copy the extension ID** from its card - 32 letters.
+8. **Register the native host** with that ID:
 
-**2. Register the native host**, using that ID:
+   ```powershell
+   powershell -NoProfile -ExecutionPolicy Bypass -File native\install-host.ps1 `
+       -ExtensionId <id from the extension card> `
+       -ScriptsDir  "C:\path\to\claude-kb"
+   ```
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File native\install-host.ps1 `
-    -ExtensionId <id from the extension card> `
-    -ScriptsDir  "C:\path\to\claude-kb"
-```
+   It generates `native\host.cmd` and the host manifest from your values, then
+   registers them under HKCU **for each Chromium browser it finds installed**,
+   and reports which it registered and which it skipped as absent. The
+   interpreter comes from `config.json` if present; pass `-Python` to override.
+   Both generated files are gitignored - they hold absolute paths specific to
+   your machine.
 
-That generates `native\host.cmd` and the host manifest from your values and
-registers them under HKCU for both browsers. The interpreter comes from
-`config.json` if it is there; pass `-Python` to override. Both generated files
-are gitignored - they hold absolute paths specific to your machine.
+9. **Reload the extension** and open its popup. It should say **Host ready** and
+   name the `incoming/` directory it will write to.
 
-**3. Reload the extension** and open its popup. It should say *Host ready* and
-name the `incoming/` directory it will write to. If it does not, run
-`native\host.cmd` directly in a terminal: it should sit waiting for input rather
-than exiting with an error.
+If it does not, run `native\host.cmd` directly in a terminal: it should sit
+waiting for input rather than exiting with an error.
 
 To remove it: `install-host.ps1 -Uninstall -ExtensionId <id> -ScriptsDir <dir>`.
+
+> ### WARNING: do not move the extension folder after registering
+>
+> The extension is not in any store, so it is loaded **unpacked** - and an
+> unpacked extension's ID is **derived from the path it was loaded from**. Move
+> or rename that folder, reload, and the browser assigns a **new ID**. The host
+> registration still names the old one, so the host refuses to talk to it and
+> the popup reports it as unavailable.
+>
+> That failure looks nothing like its cause, which is why it is worth knowing in
+> advance. The popup's message names this specifically and prints the extension's
+> current ID, so the fix is to re-run `install-host.ps1` with that ID.
+>
+> Pick a permanent home for the clone *before* step 6.
 
 ### Using it
 
@@ -527,7 +575,10 @@ selection sensible, not a prediction: a `grown` row can still come back
 **unchanged** if the change did not alter indexable text.
 
 *select new* ticks everything new or grown, which is usually what you want.
-Then **Capture selected**.
+Then use the same two buttons as the single-conversation pair above:
+**Capture + Ingest** writes the captures **and indexes them**, and **Capture
+only** writes them to `incoming/` for the scheduled run to pick up. Both are
+labelled with the number selected.
 
 **Runs are paced on purpose.** Half a second between conversations, a quarter
 second between list pages, and a cap of 25 conversations per run. These are
@@ -543,11 +594,20 @@ it and the last run is still there.
 The labels need the native host (it answers a read-only query for what is
 indexed). If the host is unreachable the list still loads, just unlabelled.
 
-**If your account has more than one organisation** - a Claude subscription plus
-API console access, say - only the subscription one holds conversations. The
-extension selects it by capability rather than by whichever the API lists first,
-so this needs nothing from you. An API-only account is reported as *no chat
-organisation*, which is a different thing from being signed out.
+**If your account has more than one organisation, this matters.** A Claude
+subscription plus API console access gives you two, and **only the subscription
+one serves conversations** - the API organisation answers the same endpoint with
+`403 permission_error`, by design, forever. The extension selects by
+*capability* rather than by whichever the API happens to list first, so this
+needs nothing from you.
+
+It is called out because it costs a debugging cycle when it goes wrong: an
+implementation that iterates organisations in array order will hit the API one,
+and a `403` reported as "not signed in" sends you to check a session that is
+perfectly fine. If you see **Not permitted - and you ARE signed in**, that is
+this, not your login. An API-only account with no subscription is reported as
+**no chat organisation**, which is again a different thing from being signed
+out.
 
 ### What the popup is telling you
 
@@ -557,7 +617,7 @@ refused must never read as a success.
 | Outcome | Meaning | Did anything change? |
 |---|---|---|
 | **Ingested** | Indexed as new or updated. | Yes |
-| **Saved (not ingested)** | Written to `incoming/`, waiting for a run. | Not yet |
+| **Saved (not ingested)** | Written to `incoming/`, waiting for a run. From *Capture only*. | Not yet |
 | **Already indexed, unchanged** | Identical to what is stored. | No, and nothing was lost |
 | **Held back - PARTIAL** | Fewer messages than the copy already indexed, so it was not allowed to replace it. Normal when an export already covers this chat. | No, and nothing was lost |
 | **Partly ingested** | Several captures, mixed outcomes. Refused files stay in `incoming/`. | Some |

@@ -25,7 +25,14 @@ function sendNative(message) {
             message:
               "The native host did not answer (" +
               msg +
-              "). Run native/install-host.ps1 with this extension's ID, then reload.",
+              "). If it worked before, the most likely cause is that this " +
+              "extension's folder was moved or renamed: an unpacked extension's " +
+              "ID is derived from its path, so moving it changes the ID and the " +
+              "host registration no longer matches. Re-run native/install-host.ps1 " +
+              "with the ID shown on this extension's card, then reload. " +
+              "This extension's ID is " +
+              chrome.runtime.id +
+              ".",
           });
           return;
         }
@@ -173,10 +180,13 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
       // Send whatever was captured, even after a fatal stop: files already in
       // hand should not be discarded because a later one failed.
+      // ingest defaults to true: "Capture + Ingest" is the ordinary action, and
+      // an older popup that sends no flag should keep behaving as it did.
+      const doIngest = msg.ingest !== false;
       let reply = { ok: true, status: "none", message: "Nothing captured." };
       if (run.captured.length) {
         reply = await sendNative({
-          type: "save_and_ingest",
+          type: doIngest ? "save_and_ingest" : "save",
           files: run.captured.map((c) => ({ name: c.filename, content: c.content })),
         });
       }
@@ -184,6 +194,13 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       // Fold the host's per-file disposition back onto the conversations, so
       // every selected uuid has an outcome by name.
       const byFile = {};
+      // A "save" run has no per-file disposition to report - nothing was
+      // ingested, by request - so every file it wrote is SAVED. Leaving these
+      // UNKNOWN would read as something having gone wrong.
+      for (const w of reply.written || []) byFile[w.name] = "SAVED";
+      for (const r of reply.refused || []) {
+        byFile[r.name] = "REFUSED: " + (r.reason || "write guard");
+      }
       for (const n of reply.ingested || []) byFile[n] = "INGESTED";
       for (const n of reply.partial || []) byFile[n] = "PARTIAL";
       for (const n of reply.skipped || []) byFile[n] = "SKIPPED";
