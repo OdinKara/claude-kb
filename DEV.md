@@ -269,20 +269,91 @@ keeping the longer and rejecting the other with a reason. Otherwise the second
 would be compared against the first's freshly written count - a comparison
 against this run rather than against the index.
 
-Two disposals, deliberately different:
+Four dispositions, one line each, per file:
 
-    PARTIAL   accepted, ingested as a no-op, ARCHIVED. A conversation only
-              grows in the index, so a capture shorter than what is stored will
-              be shorter forever; leaving it to retry accomplishes nothing.
+    INGESTED  reached the index (new or updated). ARCHIVED.
+    PARTIAL   shorter than what is stored, so held back. ARCHIVED - a
+              conversation only grows in the index, so a short capture stays
+              short and retrying accomplishes nothing.
+    SKIPPED   already indexed, unchanged. ARCHIVED, nothing left to contribute.
+    REJECTED  failed validation, never ingested, LEFT in incoming/. It is a
+              fault to look at, not a file to quietly file away - and so it is
+              reported again on every later run until someone deals with it.
 
-    REJECTED  never ingested, LEFT in incoming/. It is a fault to look at, not
-              a file to quietly file away.
+The first three are all "accepted"; only REJECTED is not. Keeping INGESTED
+distinct from the other two matters more than it looks: a file that VALIDATED is
+not a file that reached the index, and reporting the first as the second is
+exactly how a held-back capture comes to look like a successful one in a UI. The
+first cut of this printed INGESTED for everything that parsed, which meant a
+PARTIAL - the very outcome the shrink guard exists to produce - was announced as
+a success.
 
 The reader emits one `REJECTED <file>: <reason>` line per refusal and
 `kb_ingest.py` folds those reasons into its single log entry. A reason that is
 computed and then dropped before reaching `ingest.log` leaves a 06:00 rejection
 undiagnosable the morning after - the same silent-stall shape as the eleven-day
 export stall, in a new place.
+
+## The native messaging host
+
+`native/host.py` speaks Chrome/Edge native messaging (uint32 LE length prefix +
+UTF-8 JSON) so a browser extension can write captures into `incoming/` and
+trigger an ingest - neither of which an extension can do by itself.
+
+Every path comes from `kb_config`. The one thing the host cannot resolve on its
+own is where the KB scripts live, because the browser launches it from its own
+directory: `host.cmd` sets `CLAUDE_KB_SCRIPTS` and the installer writes
+`host.cmd`. That is also why `host.py` inserts that directory on `sys.path`
+before importing `kb_config` rather than assuming an import path.
+
+### The write guard is the point
+
+`safe_name()` is the reason this host is safe to install. It runs with the
+user's privileges and writes where it is told, so a compromised or simply buggy
+extension is the threat model, and three independent conditions are ALL
+required:
+
+    basename only        no directory component survives, ".." is stripped
+    extension allowlist  .json or .md, nothing executable or loadable
+    name prefix          claude-web-, a hard requirement
+
+The prefix is not cosmetic. It is what keeps the host from being a general
+file-writing primitive: even given the other two conditions, a caller cannot
+land a file the ingest path does not already expect to find. Do not relax it for
+convenience.
+
+### It always answers
+
+A native host that exits without replying gives the extension a bare
+"disconnected", which is indistinguishable from not being installed - so a
+configuration problem sends someone to the registry instead of to their
+`config.json`. Every failure path therefore returns a framed message, including
+a failure to import `kb_config` at all.
+
+### It reports on everything pending, not just what it wrote
+
+`save_and_ingest` writes files and then ingests the whole `incoming/` queue,
+reporting each file's disposition. The archiving step runs the normal ingest
+runner, which processes whatever is there regardless - so reporting only on the
+files just written would mean the numbers shown to the user did not describe
+what actually happened to the index.
+
+### The installer
+
+`install-host.ps1` takes an extension id and a scripts directory and nothing
+else. It generates `host.cmd` from `host.cmd.example` and writes the host
+manifest, then registers both under HKCU for Chrome and Edge. Both generated
+files carry machine-specific absolute paths and are gitignored, the same way the
+extension bundle is.
+
+It validates before touching the registry: the extension id must look like one
+(32 chars, a-p), and the scripts directory must actually contain the modules.
+A wrong value caught here is a message; the same value caught later is a silent
+"host disconnected".
+
+The script is deliberately **pure ASCII**. Windows PowerShell 5.1 reads a
+BOM-less UTF-8 file as Windows-1252, so a stray non-ASCII character becomes
+mojibake and can break parsing outright.
 
 ## The MCP extension is generated, not checked in
 

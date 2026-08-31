@@ -408,37 +408,49 @@ def upsert_conversations(conn, conversations, authoritative):
     conversation - see _should_replace. Returns (new, updated, skipped,
     partial).
     """
-    c_new = c_upd = c_skip = c_part = 0
+    tally = {"new": 0, "updated": 0, "skipped": 0, "partial": 0}
     for c in conversations:
-        msgs = _conv_messages(c)
-        if not msgs:
-            continue
-        uuid = c.get("uuid") or ""
-        incoming = (c.get("updated_at") or "",
-                    _hash_texts([t for t, _, _ in msgs]),
-                    len(msgs))
-        row = conn.execute(
-            "SELECT updated_at, content_hash, msg_count FROM indexed_convs"
-            " WHERE conversation_uuid=?", (uuid,)).fetchone()
-        if row is None:                                       # NEW
-            _insert_conv(conn, c)
-            c_new += 1
-            continue
-        action = _should_replace(row, incoming, authoritative)
-        if action == "replace":
-            conn.execute(
-                "DELETE FROM docs WHERE conversation_uuid=? AND source='chat'", (uuid,))
-            _insert_conv(conn, c)                             # UPDATED
-            c_upd += 1
-        elif action == "partial":
-            # Fewer messages than are already indexed, from a writer that is
-            # not a complete snapshot. Leave the fuller version alone.
-            print(f"  PARTIAL {uuid}: {incoming[2]} messages vs {row[2]} indexed"
-                  f" - keeping the indexed version")
-            c_part += 1
-        else:
-            c_skip += 1                                       # SKIP (unchanged)
-    return c_new, c_upd, c_skip, c_part
+        status = _upsert_one(conn, c, authoritative)
+        if status:
+            tally[status] += 1
+    return tally["new"], tally["updated"], tally["skipped"], tally["partial"]
+
+
+def _upsert_one(conn, c, authoritative):
+    """Upsert one conversation. Returns "new"/"updated"/"skipped"/"partial", or
+    None when there is nothing indexable.
+
+    Per-conversation rather than per-batch so callers can report what happened
+    to each INPUT. A file that validated is not the same as a file that reached
+    the index, and reporting the first as the second is how a held-back capture
+    comes to look like a successful one.
+    """
+    msgs = _conv_messages(c)
+    if not msgs:
+        return None
+    uuid = c.get("uuid") or ""
+    incoming = (c.get("updated_at") or "",
+                _hash_texts([t for t, _, _ in msgs]),
+                len(msgs))
+    row = conn.execute(
+        "SELECT updated_at, content_hash, msg_count FROM indexed_convs"
+        " WHERE conversation_uuid=?", (uuid,)).fetchone()
+    if row is None:
+        _insert_conv(conn, c)
+        return "new"
+    action = _should_replace(row, incoming, authoritative)
+    if action == "replace":
+        conn.execute(
+            "DELETE FROM docs WHERE conversation_uuid=? AND source='chat'", (uuid,))
+        _insert_conv(conn, c)
+        return "updated"
+    if action == "partial":
+        # Fewer messages than are already indexed, from a writer that is not a
+        # complete snapshot. Leave the fuller version alone.
+        print(f"  PARTIAL {uuid}: {incoming[2]} messages vs {row[2]} indexed"
+              f" - keeping the indexed version")
+        return "partial"
+    return "skipped"
 
 
 def update(export_path, authoritative=True):
@@ -630,13 +642,16 @@ def update_web(paths):
         good.append(p)
         seen[uuid] = (p, len(_conv_messages(conv)))
 
+    # Per-file disposition, so a caller can say what became of each capture
+    # rather than only how the batch went in aggregate.
+    outcomes = []
     conn = sqlite3.connect(DB)
     try:
         conn.execute("PRAGMA journal_mode=WAL")
         _ensure_schema(conn)
         _backfill_tracking(conn)
-        c_new, c_upd, c_skip, c_part = upsert_conversations(
-            conn, conns, authoritative=False)
+        for path, conv in zip(good, conns):
+            outcomes.append((path, _upsert_one(conn, conv, authoritative=False)))
         conn.commit()
         conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         total = conn.execute("SELECT count(*) FROM docs").fetchone()[0]
@@ -644,15 +659,21 @@ def update_web(paths):
         conn.close()
     write_gz()
 
+    tally = {"new": 0, "updated": 0, "skipped": 0, "partial": 0}
+    for _p, st in outcomes:
+        if st:
+            tally[st] += 1
     rejected = len(paths) - len(good)
+
     print("\n=== WEB CAPTURE UPDATE (upsert; nothing wiped) ===")
     print(f"  files            : {len(paths)} ({rejected} rejected)")
-    print(f"  chats   NEW={c_new}  UPDATED={c_upd}  SKIPPED={c_skip}"
-          f"  PARTIAL={c_part}")
+    print(f"  chats   NEW={tally['new']}  UPDATED={tally['updated']}"
+          f"  SKIPPED={tally['skipped']}  PARTIAL={tally['partial']}")
     print(f"  total rows        : {total}")
-    print(f"SUMMARY NEW={c_new} UPDATED={c_upd} SKIPPED={c_skip} "
-          f"PARTIAL={c_part} REJECTED={rejected} ROWS={total}")
-    return True, good
+    print(f"SUMMARY NEW={tally['new']} UPDATED={tally['updated']} "
+          f"SKIPPED={tally['skipped']} PARTIAL={tally['partial']} "
+          f"REJECTED={rejected} ROWS={total}")
+    return True, outcomes
 
 
 def write_gz():
@@ -816,10 +837,19 @@ if __name__ == "__main__":
             for f in missing:
                 print(f"ERROR: no such file: {f}")
             sys.exit(2)
-        ok, ingested = update_web(files)
-        # Name what was actually ingested so the caller archives only those.
-        for p in ingested:
-            print(f"INGESTED {p}")
+        ok, outcomes = update_web(files)
+        # One line per accepted file, naming what actually became of it.
+        # INGESTED means it reached the index. PARTIAL and SKIPPED did not, and
+        # must never be reported as if they had - a caller that conflates them
+        # tells the user a held-back capture succeeded. All three are accepted
+        # and archivable; only REJECTED (printed by the reader) is not.
+        for p, st in outcomes:
+            if st in ("new", "updated"):
+                print(f"INGESTED {p}")
+            elif st == "partial":
+                print(f"PARTIAL {p}")
+            elif st == "skipped":
+                print(f"SKIPPED {p}")
         sys.exit(0 if ok else 1)
     elif len(sys.argv) >= 3 and sys.argv[1] == "search":
         search(" ".join(sys.argv[2:]))
