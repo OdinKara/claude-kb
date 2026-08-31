@@ -1,9 +1,15 @@
-# Creates the scheduled task that runs kb_ingest.py unattended.
+# OPTIONAL. Creates a scheduled task that runs kb_ingest.py unattended.
 #
-# The task is what kb_open.py triggers at the end of a collection run, and what
-# picks up anything left in incoming/ overnight. Without it, a fresh install
-# gets all the way through downloading the export - spending its one-time URLs -
-# and then has nothing to hand the parts to.
+# Nothing requires this. The normal workflow is running kb_open.py when you want
+# an update and finishing with kb_ingest.py; this task only removes that second
+# command, and picks up anything left in incoming/ overnight. kb_open.py handles
+# a missing task by naming the command that finishes the job, so skipping this is
+# a supported setup rather than an incomplete one.
+#
+# Note what it creates: schtasks without stored credentials produces a task with
+# Logon Mode "Interactive only", which runs ONLY while its own account is logged
+# on interactively. A daily ingest will not happen on a machine you log out of.
+# See the check at the end, and `schtasks /change /ru /rp` if you need better.
 #
 # Usage:
 #   powershell -NoProfile -ExecutionPolicy Bypass -File install-task.ps1

@@ -11,7 +11,7 @@ the one that drifts is always the one someone follows.
 
 - setting up the index and search: **From clone to searchable in Claude**
 - setting up browser capture: **From clone to capturing**
-- the ingest task, which is required, not optional: **Scheduled ingest**
+- the ingest task, an OPTIONAL convenience: **Scheduled ingest**
 - `/kb-setup` walks all of it and stops where a human is needed
 
 `DEV.md` explains why things are built the way they are. Read it before changing
@@ -48,6 +48,19 @@ rather than letting a macOS or Linux user get halfway.
 **Never commit the database or an export.** `claude_kb.db` holds the full text of
 every message the user has ever sent Claude. `.gitignore` covers it and the
 export artifacts; do not add exceptions.
+
+**No real identifiers anywhere in this repo - including in examples.** This is a
+public repository, and prose drifts past this more easily than code does: an
+illustrative path, a sample username, a "verified on <date>" note. Use
+placeholders - `alice`, `HOST`, `<you>`, `example.com`, `C:\Users\you\...` - and
+keep out real usernames, machine or org names, account handles, organization
+uuids, extension ids, email addresses, absolute paths under a real home
+directory, dates that reveal usage, and absolute corpus counts. Proportions are
+fine where a count is not.
+
+Check this before every commit, not from memory. A repo-local `pre-commit` hook
+runs the check when one is installed; when it is not, do the sweep by hand and
+say you did.
 
 ## What you cannot do, and must hand over
 

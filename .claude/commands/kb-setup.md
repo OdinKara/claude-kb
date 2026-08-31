@@ -1,5 +1,5 @@
 ---
-description: Set up this clone of Claude KB - index, search, ingest task, and optionally browser capture
+description: Set up this clone of Claude KB - index, search, and optionally browser capture
 ---
 
 Walk the user through setting up this repo, following `README.md`. This command
@@ -32,15 +32,17 @@ a missing dependency three steps in:
 - Ask which browser they use, and whether it permits unpacked extensions.
   Managed or policy-locked browsers often do not - that rules out browser
   capture only, and nothing else.
-- Confirm the platform. The native host, both installers and the scheduled task
-  are **Windows only**. On macOS or Linux, do phases 1-3 and say plainly that
-  4-6 are unavailable.
+- Confirm the platform. The native host and its installer are **Windows only**.
+  On macOS or Linux, do phases 1-3 and say plainly that 4-6 are unavailable.
 
 Ask what the user actually wants before building anything:
 
 - **the index and CLI search** - phases 1-2
 - **plus search from Claude Desktop** - add phase 3
 - **plus browser capture** - add phases 4-6
+
+The scheduled ingest task is not part of any of these. It is an optional extra;
+offer it only if they ask for ingests to happen without them.
 
 ## Phase 1 - configuration
 
@@ -72,17 +74,15 @@ request. Ask whether they already have one.
 Verify: `python claude_kb.py search "<a word they expect to appear>"` returns
 hits. Report the row count.
 
-## Phase 3 - the ingest task, and search from Desktop
+## Phase 3 - search from Claude Desktop
 
-Follow README **Scheduled ingest**. Run `install-task.ps1`. This is required, not
-optional: `kb_open.py` triggers this task by name, so without it a later fetch
-downloads the parts, spends their single-use URLs, and has nothing to hand them
-to.
+**Do not create the scheduled task.** It is an optional convenience and its
+absence is not an incomplete setup - `kb_open.py` handles a missing task by
+naming the one command that finishes the job. Mention `install-task.ps1` exists
+only if they ask for unattended ingests, and if you do, say that it creates an
+*Interactive only* task which runs solely while that account is logged on.
 
-Verify: trigger it once and confirm `ingest.log` ends with `no new export` on an
-empty `incoming/`. That is a clean result, not a failure.
-
-Then, if they want Desktop search, follow README **MCP extension**:
+Follow README **MCP extension**:
 `python build_extension.py`, then Route A (pack a `.mcpb`) or Route B (no Node).
 
 HAND OVER: **installing the `.mcpb` in Claude Desktop is theirs to do.** You can
@@ -136,7 +136,8 @@ is telling you** - in particular:
 - what was set up, and what was skipped because they did not want it or the
   platform does not support it
 - the index row count and a search that returned hits
-- whether the ingest task exists and logged a clean run
+- that the scheduled task was deliberately not created, and that this is
+  complete rather than missing
 - whether `kb_search` answers in Desktop, or that it is still pending their
   install
 - whether the popup says Host ready, or what it said instead

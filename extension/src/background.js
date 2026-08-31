@@ -212,21 +212,29 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         messages: c.messages,
         outcome: byFile[c.filename] || "UNKNOWN",
       }));
+      const OUTCOME_LABEL = {
+        capped: "CAPPED",
+        not_attempted: "NOT ATTEMPTED",
+      };
       for (const f of run.failed || []) {
         perConversation.push({
           uuid: f.uuid,
           title: "",
           messages: 0,
-          outcome: (f.kind === "not_attempted" ? "NOT ATTEMPTED" : "NOT CAPTURED") +
-            ": " + (f.detail || f.kind),
+          outcome:
+            (OUTCOME_LABEL[f.kind] || "NOT CAPTURED") + ": " + (f.detail || f.kind),
         });
       }
 
+      const capped = (run.failed || []).filter((f) => f.kind === "capped").length;
       const report = Object.assign({}, reply, {
         perConversation,
         selected: uuids.length,
         capturedCount: run.captured.length,
-        failedCount: (run.failed || []).length,
+        // failedCount excludes the capped ones: they are not failures, and
+        // counting them as such is what made a working run look broken.
+        failedCount: (run.failed || []).length - capped,
+        cappedCount: capped,
         stoppedBy: run.stoppedBy || null,
         limit: run.limit,
       });
