@@ -49,7 +49,7 @@ Then report, in this order:
 | code | meaning | what to tell the user |
 |------|---------|-----------------------|
 | 0 | parts downloaded and ingest confirmed in `<root>/ingest.log` | Done. Quote the SUMMARY line and the new ROWS total. |
-| 1 | nothing to do, or ingest not confirmed | Say which. "Nothing new" means the parts were already in `<root>/incoming/`. "no new ingest.log line after 120s" means the task fired but did not log - check `<root>/ingest.log` manually. |
+| 1 | nothing to do, or ingest not confirmed | Say WHICH of the three. "Nothing new" means the parts were already in `<root>/incoming/`. "COULD NOT TRIGGER THE INGEST TASK" means the scheduled task does not exist or would not start - the parts downloaded fine and are safe in `incoming/`; the fix is `install-task.ps1`, or `kb_ingest.py` directly. "the task was triggered but wrote no new ingest.log line" means it did start and logged nothing - check `<root>/ingest.log`. |
 | 2 | environment problem | Either no browser was found, there is no `manifest-*.json` in `<root>/incoming/`, or a required setting is missing. The script names which. The manifest case is the common one: no new export manifest has been dropped yet. |
 | 3 | canary failed - `light_metadata` did not download | The cause is genuinely ambiguous: EITHER the browser is not logged into claude.ai, OR that URL was already spent. These are indistinguishable from outside - report both, do not assert one. No valuable URLs were touched. See the recovery path below. |
 

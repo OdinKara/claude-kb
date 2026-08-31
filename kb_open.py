@@ -249,10 +249,35 @@ def run_canary(browser, data, manifest_base):
 
 
 def confirm_ingest(pre_count):
-    """Fire the ingest task, then wait for a genuinely new ingest.log line."""
+    """Fire the ingest task, then wait for a genuinely new ingest.log line.
+
+    The trigger's exit status is checked. It used to be discarded, which meant a
+    task that does not exist - the state of every fresh install until someone
+    creates it - produced a 120-second wait and then "ingest triggered but no
+    new ingest.log line", a sentence that is false in its first two words. The
+    parts had downloaded, the one-time URLs were spent, and the message pointed
+    at the wrong problem.
+    """
     say("Running ingest...")
-    subprocess.run(["schtasks", "/run", "/tn", TASK_NAME],
-                   capture_output=True, text=True)
+    r = subprocess.run(["schtasks", "/run", "/tn", TASK_NAME],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        detail = ((r.stdout or "") + (r.stderr or "")).strip().splitlines()
+        detail = detail[-1].strip() if detail else "no output"
+        print("COULD NOT TRIGGER THE INGEST TASK %r: %s" % (TASK_NAME, detail))
+        print("")
+        print("  The downloaded parts are SAFE in %s" % INCOMING)
+        print("  and nothing has been lost - only the ingest did not start.")
+        print("")
+        print("  If the task has never been created (the usual cause on a new")
+        print("  install), create it once:")
+        print("      powershell -NoProfile -ExecutionPolicy Bypass \\")
+        print("          -File install-task.ps1 -ScriptsDir \"<this directory>\"")
+        print("")
+        print("  Or ingest right now without it:")
+        print("      %s kb_ingest.py" % (kb_config.get("python") or "python"))
+        return 1
+
     deadline = time.time() + INGEST_TIMEOUT
     while time.time() < deadline:
         cur = log_lines()
@@ -260,8 +285,8 @@ def confirm_ingest(pre_count):
             print(cur[-1])
             return 0
         time.sleep(2)
-    print("ingest triggered but no new ingest.log line after %ds - "
-          "check manually" % INGEST_TIMEOUT)
+    print("the task was triggered but wrote no new ingest.log line after %ds - "
+          "check %s" % (INGEST_TIMEOUT, LOG))
     return 1
 
 
