@@ -167,6 +167,42 @@ triggering it, it polls `ingest.log` for up to 120s for a genuinely new line and
 prints it, so the caller sees the actual
 `SUMMARY NEW=.. UPDATED=.. SKIPPED=.. ROWS=..` rather than a silent success.
 
+## Not every writer may shrink a conversation
+
+`update()` takes an `authoritative` flag, and `_should_replace()` is the whole
+decision:
+
+    authoritative      replace whenever the content hash differs or updated_at
+                       is newer. The official export is a COMPLETE snapshot, so
+                       it may legitimately shrink a conversation - you deleted
+                       messages, and the export is the truth.
+
+    not authoritative  same, but only when the incoming message count is >= the
+                       count already indexed. Otherwise: PARTIAL, and the
+                       indexed version is left alone.
+
+The asymmetry exists because a hash comparison cannot distinguish "this is
+newer" from "this is a partial view of the same thing" - both simply hash
+differently. Any writer that captures a conversation while it is still being
+added to will hold FEWER messages than a later export of that conversation.
+Replacing on hash alone would delete the fuller version, reinstate the shorter
+one, and report `UPDATED=1` while doing it. Silent loss, reported as success -
+the exact failure shape this codebase keeps running into.
+
+**The counts must come from the same normalizer.** `msg_count` is the length of
+`_conv_messages()` output, not `len(chat_messages)`: messages that are neither
+`human` nor `assistant`, and messages whose content flattens to nothing, are
+dropped. Across one real export that filter removes 114 of 17,557 messages. A
+count taken before that filter is not comparable to a stored one, and the guard
+silently degrades into a coin flip. Any future writer must count through
+`_conv_messages`.
+
+An unknown count on either side returns PARTIAL rather than replacing: if the
+guard cannot prove the incoming version is not a shrink, it refuses.
+
+`SUMMARY` gained a `PARTIAL=` field. `kb_ingest.py` matches on the `SUMMARY`
+prefix, so appending fields is safe; reordering or renaming the prefix is not.
+
 ## The MCP extension is generated, not checked in
 
 The repo holds one `claude_kb.py`. `.mcpb` requires the entry point inside the

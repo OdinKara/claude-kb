@@ -450,6 +450,10 @@ excerpts or an exhaustive list of every hit.
 
 - The index is incremental. `update` upserts and never wipes, so re-ingesting an
   overlapping export is safe and cheap.
+- A conversation is only shortened by a writer entitled to shorten it. The
+  official export is a complete snapshot and may; anything else must bring at
+  least as many messages as are already indexed, or the update is reported as
+  `PARTIAL` and the fuller version is kept. See `DEV.md`.
 - FTS5 is used when SQLite has it, with an automatic fall-back to FTS4.
 - `build` is a clean-slate rebuild that **deletes and recreates** the database.
   You almost never want it; `update` is the normal path.
