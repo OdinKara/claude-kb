@@ -53,13 +53,18 @@ def stamp():
     return datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
 
 
-def run_update(target):
-    """Run claude_kb.py update <target>. Returns (ok, summary_line, combined_output)."""
-    r = subprocess.run([PY, SCRIPT, "update", target],
+def run_kb(args):
+    """Run claude_kb.py <args>. Returns (ok, summary_line, combined_output)."""
+    r = subprocess.run([PY, SCRIPT] + list(args),
                        capture_output=True, text=True, encoding="utf-8", errors="replace")
     out = (r.stdout or "") + (r.stderr or "")
     summary = next((ln.strip() for ln in out.splitlines() if ln.startswith("SUMMARY")), None)
     return (r.returncode == 0 and summary is not None), summary, out
+
+
+def run_update(target):
+    """Run claude_kb.py update <target>. Returns (ok, summary_line, combined_output)."""
+    return run_kb(["update", target])
 
 
 def fail(label, out, rc_note):
@@ -87,6 +92,49 @@ def ingest_legacy(zips):
             continue
         moved = archive([z], stamp())
         log(f"ingested {base} -> processed/{moved[0]} | {summary}")
+
+
+def find_web():
+    """Web captures waiting in incoming/. Named by the extension that writes them."""
+    return sorted(glob.glob(os.path.join(INCOMING, "claude-web-*.json")))
+
+
+def ingest_web(paths):
+    """Ingest web captures, archiving only the files claude_kb.py accepted.
+
+    A capture is never authoritative, so it can come back PARTIAL - fewer
+    messages than are already indexed. That is a correct outcome, not a
+    failure: the capture is archived rather than left to retry, because a
+    conversation only grows in the index and a partial one will stay partial
+    forever.
+
+    A REJECTED file (bad format, truncated messages) is left in incoming/ so it
+    is visible rather than quietly filed away.
+    """
+    names = ", ".join(os.path.basename(p) for p in paths)
+    ok, summary, out = run_kb(["update-web"] + paths)
+    if not ok:
+        fail(names, out, "web capture")
+        return
+
+    ingested = [ln[len("INGESTED "):].strip()
+                for ln in out.splitlines() if ln.startswith("INGESTED ")]
+    # Carry the child's reasons into the log. A rejection whose cause is
+    # computed and then dropped is undiagnosable the morning after.
+    rejected = [ln[len("REJECTED "):].strip()
+                for ln in out.splitlines() if ln.startswith("REJECTED ")]
+    why = ("; ".join(rejected))[:400] if rejected else ""
+
+    if not ingested:
+        log(f"web captures [{names}] - none accepted, left in incoming"
+            f"{' (' + why + ')' if why else ''} | {summary}")
+        return
+
+    st = stamp()
+    archive(ingested, st)
+    kept = ", ".join(os.path.basename(p) for p in ingested)
+    tail = f" ({len(rejected)} rejected, left in incoming: {why})" if rejected else ""
+    log(f"ingested web captures [{kept}] -> processed/{st}_*{tail} | {summary}")
 
 
 def find_parts():
@@ -132,13 +180,16 @@ def main():
 
     legacy    = sorted(glob.glob(os.path.join(INCOMING, "data-*.zip")))
     parts     = find_parts()
+    web       = find_web()
     manifests = sorted(glob.glob(os.path.join(INCOMING, "manifest-*.json")))
 
     if legacy:
         ingest_legacy(legacy)
     if parts:
         ingest_multipart(parts, manifests)
-    if not legacy and not parts:
+    if web:
+        ingest_web(web)
+    if not legacy and not parts and not web:
         if manifests:
             # NEVER contact an export URL from here: it cannot succeed from a
             # scheduled context and each attempt burns a one-time token.
