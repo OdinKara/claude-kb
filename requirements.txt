@@ -1,0 +1,8 @@
+# Indexing and CLI search need NOTHING from this file - they are Python standard
+# library only. This is required solely to SERVE the index to Claude, via
+# `claude_kb.py mcp` or `claude_kb.py http`, and by the generated MCP extension.
+#
+# Pinned to 1.x deliberately: 2.x renamed the mcp.server.fastmcp.FastMCP API this
+# project builds on, and an unpinned `pip install mcp` today gets 2.x and fails
+# with an ImportError that reads like a bug here rather than a version mismatch.
+mcp>=1.0,<2

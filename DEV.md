@@ -157,6 +157,35 @@ nothing. If the URLs really are spent, no reset helps - request a fresh export.
         -> claude_kb.py update             incremental upsert, never wipes
         -> processed/<stamp>_*             parts AND manifest archived, one stamp
 
+### Verifying a task means asking whether it can RUN, not only what it runs
+
+`install-task.ps1` confirmed the task's command line and stopped there. That
+proves the task would do the right thing IF it ran, and says nothing about
+whether it can. Those are different questions.
+
+`schtasks /create` without stored credentials produces a task whose Logon Mode
+is **Interactive only** - it runs only while its own account is logged on
+interactively. Register it as an account that is not the interactive user and the
+task is created cleanly, verifies cleanly, and then never fires. Silent stall,
+same family as everything else in this file.
+
+`Test-TaskCanFire` decides on three inputs - Logon Mode, Run As User, and the
+interactive user from `Win32_ComputerSystem` - and a `fail` throws rather than
+letting the installer report success on a task that cannot run.
+
+**Account names must be normalised before comparison.** `schtasks` reports the
+bare name (`alice`) while the session reports a qualified one (`HOST\alice`).
+Comparing them raw produces a confident false failure on a machine that is
+working perfectly - which would be worse than the bug being fixed, since it
+would fire on every correct install.
+
+The `warn` outcomes matter as much as `fail`: an interactive-only task running as
+the interactive user DOES work while they are logged on, and does NOT run at
+06:00 if they are logged off. That is a real limitation of what this installer
+creates, so it is stated rather than papered over.
+
+### The task is shipped, not hand-made
+
 The scheduled task is created by `install-task.ps1`, not by hand. It was a
 hand-made artifact on one machine for months, which meant a fresh install got
 all the way through downloading an export - spending its single-use URLs - and
