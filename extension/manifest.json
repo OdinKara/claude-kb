@@ -17,6 +17,6 @@
       "run_at": "document_idle"
     }
   ],
-  "permissions": ["nativeMessaging", "tabs"],
+  "permissions": ["nativeMessaging", "tabs", "storage"],
   "host_permissions": ["https://claude.ai/*"]
 }

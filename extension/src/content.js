@@ -21,6 +21,18 @@
 
 const API_TIMEOUT_MS = 20000;
 
+/* Pacing. These endpoints are internal and unsupported, and a tight bulk loop
+ * is the single behaviour most likely to get throttled or noticed. None of this
+ * is latency-critical - a capture run is something you start and walk away
+ * from - so the delays are deliberately generous rather than tuned. */
+const LIST_PAGE_SIZE = 100;
+const LIST_PAGE_DELAY_MS = 250;
+const LIST_MAX_ITEMS = 2000;
+const CAPTURE_DELAY_MS = 500;
+const CAPTURE_MAX_PER_RUN = 25;
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
 function fail(kind, detail, extra) {
   return Object.assign({ ok: false, kind, detail }, extra || {});
 }
@@ -92,30 +104,19 @@ async function fetchConversation(orgUuid, convUuid) {
   return getJson(url);
 }
 
-async function capture() {
-  const urlUuid = uuidFromPath(location.pathname);
-  if (!urlUuid) {
-    return fail(
-      "not_a_conversation",
-      "this page is not a conversation - open a chat first"
-    );
-  }
-
-  let orgs;
-  try {
-    orgs = await listOrganizations();
-  } catch (e) {
-    return e.kind ? e : fail("transport", String(e));
-  }
-
+/* Capture ONE conversation by uuid. Both the single-capture button and the
+ * multi-select run go through here - there is no second implementation for the
+ * bulk case, because two capture paths would drift and only one of them would
+ * be the one that got the validation right. */
+async function captureOne(convUuid, orgs, seq) {
+  let conversation = null;
+  let lastError = null;
   // The account may have several organisations and only one owns this chat.
   // Try each rather than hardcoding one; a 404 from the wrong org is expected,
   // not an error worth reporting.
-  let conversation = null;
-  let lastError = null;
   for (const org of orgs) {
     try {
-      conversation = await fetchConversation(org, urlUuid);
+      conversation = await fetchConversation(org, convUuid);
       break;
     } catch (e) {
       lastError = e.kind ? e : fail("transport", String(e));
@@ -126,29 +127,186 @@ async function capture() {
     return lastError || fail("notfound", "conversation not found in any organisation");
   }
 
-  const verdict = validateConversation(conversation, urlUuid);
-  if (!verdict.ok) {
-    return fail(verdict.kind, verdict.detail);
-  }
+  const verdict = validateConversation(conversation, convUuid);
+  if (!verdict.ok) return fail(verdict.kind, verdict.detail);
 
   const now = new Date();
-  const envelope = buildEnvelope(conversation, urlUuid, now.toISOString());
+  const envelope = buildEnvelope(conversation, convUuid, now.toISOString());
+  // A run captures several conversations inside the same second, so the
+  // timestamp alone is not unique. The suffix keeps the required prefix and the
+  // shape the write guard expects.
+  const base = captureFilename(now);
+  const filename =
+    typeof seq === "number" ? base.replace(/\.json$/, `-${seq}.json`) : base;
   return {
     ok: true,
-    filename: captureFilename(now),
+    filename,
     content: JSON.stringify(envelope),
     title: String(conversation.name || "").slice(0, 120) || "(untitled)",
-    uuid: urlUuid,
+    uuid: convUuid,
     messages: verdict.indexable,
   };
 }
 
+async function captureActive() {
+  const urlUuid = uuidFromPath(location.pathname);
+  if (!urlUuid) {
+    return fail(
+      "not_a_conversation",
+      "this page is not a conversation - open a chat first"
+    );
+  }
+  let orgs;
+  try {
+    orgs = await listOrganizations();
+  } catch (e) {
+    return e.kind ? e : fail("transport", String(e));
+  }
+  return captureOne(urlUuid, orgs);
+}
+
+/* Page through the conversation list. Paced, and capped so a runaway or a
+ * changed pagination contract cannot spin forever. */
+async function listConversations() {
+  let orgs;
+  try {
+    orgs = await listOrganizations();
+  } catch (e) {
+    return e.kind ? e : fail("transport", String(e));
+  }
+
+  const seen = new Set();
+  const items = [];
+  let truncated = false;
+
+  for (const org of orgs) {
+    let offset = 0;
+    for (;;) {
+      let page;
+      try {
+        page = await getJson(
+          `/api/organizations/${encodeURIComponent(org)}/chat_conversations` +
+            `?limit=${LIST_PAGE_SIZE}&offset=${offset}`
+        );
+      } catch (e) {
+        const err = e.kind ? e : fail("transport", String(e));
+        if (err.kind === "notfound") break; // this org has no chats; try the next
+        // Report what was collected rather than throwing it away: a partial
+        // list is still usable, and silence about why is not.
+        return Object.assign({}, err, { partialItems: items, partial: true });
+      }
+
+      const norm = normalizeListPage(page);
+      if (!norm.ok) return fail(norm.kind, norm.detail, { partialItems: items });
+
+      for (const it of norm.items) {
+        if (seen.has(it.uuid)) continue;
+        seen.add(it.uuid);
+        items.push(it);
+      }
+
+      if (!Array.isArray(page) || page.length < LIST_PAGE_SIZE) break;
+      offset += LIST_PAGE_SIZE;
+      if (items.length >= LIST_MAX_ITEMS) {
+        truncated = true;
+        break;
+      }
+      await sleep(LIST_PAGE_DELAY_MS);
+    }
+    if (truncated) break;
+  }
+
+  return { ok: true, items, truncated, max: LIST_MAX_ITEMS };
+}
+
+/* Capture many. Reports per conversation, always - including the ones a fatal
+ * error meant were never attempted, because a bulk run that stops halfway and
+ * says only "failed" leaves you guessing what landed. */
+async function captureMany(uuids) {
+  let orgs;
+  try {
+    orgs = await listOrganizations();
+  } catch (e) {
+    return e.kind ? e : fail("transport", String(e));
+  }
+
+  const wanted = uuids.slice(0, CAPTURE_MAX_PER_RUN);
+  const overflow = uuids.slice(CAPTURE_MAX_PER_RUN);
+  const captured = [];
+  const failed = [];
+  let stoppedBy = null;
+
+  for (let i = 0; i < wanted.length; i++) {
+    const uuid = wanted[i];
+    if (i) await sleep(CAPTURE_DELAY_MS);
+    try {
+      chrome.runtime.sendMessage({
+        type: "capture_progress",
+        done: i,
+        total: wanted.length,
+        uuid,
+      });
+    } catch (_e) {
+      /* the popup may be closed; progress is a courtesy, not a dependency */
+    }
+
+    let res;
+    try {
+      res = await captureOne(uuid, orgs, i);
+    } catch (e) {
+      res = fail("internal", String((e && e.message) || e));
+    }
+
+    if (res.ok) {
+      captured.push(res);
+      continue;
+    }
+    failed.push({ uuid, kind: res.kind, detail: res.detail });
+    // auth and shape will repeat for every remaining conversation. Hammering
+    // the endpoint to collect identical failures is exactly the behaviour the
+    // pacing exists to avoid.
+    if (res.kind === "auth" || res.kind === "shape") {
+      stoppedBy = res.kind;
+      for (const rest of wanted.slice(i + 1)) {
+        failed.push({
+          uuid: rest,
+          kind: "not_attempted",
+          detail: `stopped after a ${res.kind} failure`,
+        });
+      }
+      break;
+    }
+  }
+
+  for (const rest of overflow) {
+    failed.push({
+      uuid: rest,
+      kind: "not_attempted",
+      detail: `over the ${CAPTURE_MAX_PER_RUN}-conversation limit for one run`,
+    });
+  }
+
+  return { ok: true, captured, failed, stoppedBy, limit: CAPTURE_MAX_PER_RUN };
+}
+
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-  if (msg && msg.type === "capture") {
-    capture()
+  if (!msg || typeof msg !== "object") return false;
+  const run = (p) =>
+    p
       .then(sendResponse)
       .catch((e) => sendResponse(fail("internal", String((e && e.message) || e))));
-    return true; // async response
+
+  if (msg.type === "capture") {
+    run(captureActive());
+    return true;
+  }
+  if (msg.type === "list") {
+    run(listConversations());
+    return true;
+  }
+  if (msg.type === "capture_many") {
+    run(captureMany(Array.isArray(msg.uuids) ? msg.uuids : []));
+    return true;
   }
   return false;
 });

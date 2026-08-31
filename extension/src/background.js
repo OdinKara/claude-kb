@@ -66,11 +66,156 @@ async function captureFromTab(tab) {
   }
 }
 
+/* The last bulk run's report, kept so closing the popup mid-run does not lose
+ * it. A run is paced and can take a minute; losing the account of what landed
+ * would defeat the point of reporting per conversation at all. */
+async function rememberRun(report) {
+  try {
+    await chrome.storage.session.set({ lastRun: report });
+  } catch (_e) {
+    /* storage is a convenience here, never a dependency */
+  }
+}
+
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (!msg || typeof msg !== "object") return false;
 
   if (msg.type === "ping_host") {
     sendNative({ type: "ping" }).then(sendResponse);
+    return true;
+  }
+
+  if (msg.type === "last_run") {
+    chrome.storage.session
+      .get("lastRun")
+      .then((v) => sendResponse((v && v.lastRun) || null))
+      .catch(() => sendResponse(null));
+    return true;
+  }
+
+  if (msg.type === "list_conversations") {
+    (async () => {
+      const tab = await activeTab();
+      if (!tab || !/^https:\/\/claude\.ai\//i.test(tab.url || "")) {
+        sendResponse({
+          ok: false,
+          status: "error",
+          message: "Open claude.ai in this tab first.",
+        });
+        return;
+      }
+      let listed;
+      try {
+        listed = await chrome.tabs.sendMessage(tab.id, { type: "list" });
+      } catch (_e) {
+        sendResponse({
+          ok: false,
+          status: "error",
+          message: "The page did not respond. Reload the claude.ai tab.",
+        });
+        return;
+      }
+      // The indexed set is a separate READ-ONLY host call. If the host is not
+      // reachable the list is still useful, just unannotated - so a host
+      // problem degrades the labels rather than the feature.
+      const idx = await sendNative({ type: "indexed" });
+      sendResponse({
+        ok: !!listed.ok,
+        listed,
+        indexed: (idx && idx.ok && idx.indexed) || {},
+        indexedCount: (idx && idx.ok && idx.count) || 0,
+        indexedError: idx && idx.ok ? null : (idx && idx.message) || "unavailable",
+      });
+    })();
+    return true;
+  }
+
+  if (msg.type === "capture_selected") {
+    (async () => {
+      const tab = await activeTab();
+      if (!tab || !/^https:\/\/claude\.ai\//i.test(tab.url || "")) {
+        sendResponse({
+          ok: false,
+          status: "error",
+          message: "Open claude.ai in this tab first.",
+        });
+        return;
+      }
+      const uuids = Array.isArray(msg.uuids) ? msg.uuids : [];
+      if (!uuids.length) {
+        sendResponse({ ok: false, status: "error", message: "Nothing selected." });
+        return;
+      }
+
+      let run;
+      try {
+        run = await chrome.tabs.sendMessage(tab.id, { type: "capture_many", uuids });
+      } catch (_e) {
+        sendResponse({
+          ok: false,
+          status: "error",
+          message: "The page stopped responding mid-run. Reload the tab and retry.",
+        });
+        return;
+      }
+      if (!run || !run.ok) {
+        const report = {
+          ok: false,
+          status: "capture_failed",
+          kind: (run && run.kind) || "unknown",
+          message: (run && run.detail) || "Capture failed before anything was written.",
+          perConversation: [],
+        };
+        await rememberRun(report);
+        sendResponse(report);
+        return;
+      }
+
+      // Send whatever was captured, even after a fatal stop: files already in
+      // hand should not be discarded because a later one failed.
+      let reply = { ok: true, status: "none", message: "Nothing captured." };
+      if (run.captured.length) {
+        reply = await sendNative({
+          type: "save_and_ingest",
+          files: run.captured.map((c) => ({ name: c.filename, content: c.content })),
+        });
+      }
+
+      // Fold the host's per-file disposition back onto the conversations, so
+      // every selected uuid has an outcome by name.
+      const byFile = {};
+      for (const n of reply.ingested || []) byFile[n] = "INGESTED";
+      for (const n of reply.partial || []) byFile[n] = "PARTIAL";
+      for (const n of reply.skipped || []) byFile[n] = "SKIPPED";
+      for (const r of reply.rejected || []) byFile[r.name] = "REJECTED: " + r.reason;
+
+      const perConversation = run.captured.map((c) => ({
+        uuid: c.uuid,
+        title: c.title,
+        messages: c.messages,
+        outcome: byFile[c.filename] || "UNKNOWN",
+      }));
+      for (const f of run.failed || []) {
+        perConversation.push({
+          uuid: f.uuid,
+          title: "",
+          messages: 0,
+          outcome: (f.kind === "not_attempted" ? "NOT ATTEMPTED" : "NOT CAPTURED") +
+            ": " + (f.detail || f.kind),
+        });
+      }
+
+      const report = Object.assign({}, reply, {
+        perConversation,
+        selected: uuids.length,
+        capturedCount: run.captured.length,
+        failedCount: (run.failed || []).length,
+        stoppedBy: run.stoppedBy || null,
+        limit: run.limit,
+      });
+      await rememberRun(report);
+      sendResponse(report);
+    })();
     return true;
   }
 

@@ -13,6 +13,7 @@ directory: host.cmd sets CLAUDE_KB_SCRIPTS, and the installer writes host.cmd.
 
 Message types:
     ping             is the host alive, and where would it write
+    indexed          READ-ONLY: which conversations are already indexed
     save             write captures into incoming/
     ingest           ingest what is in incoming/ and report per-file outcomes
     save_and_ingest  both, reporting the ingest outcome for what was written
@@ -151,6 +152,47 @@ def handle_save(msg):
     return {"written": written, "refused": refused, "incoming": incoming}
 
 
+MAX_INDEXED_ROWS = 20000       # a native message may not exceed ~1MB
+
+
+def handle_indexed():
+    """Return what is already indexed: {uuid: {msg_count, updated_at}}.
+
+    READ-ONLY, and deliberately its own message type. It could have been folded
+    into an existing handler, but every widening of something that writes is a
+    widening of what a compromised extension can do. This opens the database
+    with mode=ro and cannot modify anything even in principle; safe_name and the
+    write path are untouched by it.
+
+    The extension uses this to mark rows as new / indexed / grown, so bulk
+    selection is not guesswork - without it most captures of an already-exported
+    account come back SKIPPED or PARTIAL.
+    """
+    import sqlite3
+
+    db = kb_config.paths()["db"]
+    if not os.path.isfile(db):
+        return {"ok": True, "indexed": {}, "count": 0, "truncated": False,
+                "message": "No index yet at %s" % db}
+
+    uri = "file:%s?mode=ro" % db.replace("\\", "/")
+    conn = sqlite3.connect(uri, uri=True)
+    try:
+        rows = conn.execute(
+            "SELECT conversation_uuid, msg_count, updated_at FROM indexed_convs"
+            " LIMIT ?", (MAX_INDEXED_ROWS + 1,)).fetchall()
+    finally:
+        conn.close()
+
+    truncated = len(rows) > MAX_INDEXED_ROWS
+    out = {}
+    for uuid, count, updated in rows[:MAX_INDEXED_ROWS]:
+        if uuid:
+            out[str(uuid).lower()] = {"msg_count": count or 0,
+                                      "updated_at": updated or ""}
+    return {"ok": True, "indexed": out, "count": len(out), "truncated": truncated}
+
+
 def _run(args):
     py = kb_config.get("python") or sys.executable
     scripts = _scripts_dir()
@@ -282,6 +324,9 @@ def handle(msg):
                 "message": ("Wrote %d file(s) to incoming." % len(saved["written"]))
                            if ok else "Nothing written; every file failed the write guard.",
                 **saved}
+
+    if kind == "indexed":
+        return handle_indexed()
 
     if kind == "ingest":
         return handle_ingest()
