@@ -157,6 +157,18 @@ nothing. If the URLs really are spent, no reset helps - request a fresh export.
         -> claude_kb.py update             incremental upsert, never wipes
         -> processed/<stamp>_*             parts AND manifest archived, one stamp
 
+The scheduled task is created by `install-task.ps1`, not by hand. It was a
+hand-made artifact on one machine for months, which meant a fresh install got
+all the way through downloading an export - spending its single-use URLs - and
+then had nothing to trigger.
+
+`confirm_ingest()` checks the trigger's exit status. It used to discard it, so a
+task that does not exist produced a 120-second wait followed by "ingest
+triggered but no new ingest.log line" - a sentence whose first two words were
+false, pointing at the wrong problem, after the expensive part had already
+happened. It now reports the failure immediately, says the parts are safe in
+`incoming/`, and names both recoveries.
+
 The scheduled task NEVER contacts an export URL. It cannot succeed from a
 non-interactive context and every attempt burns a one-time token. If a manifest
 is sitting in `incoming/` with no part zips, the task logs `manifest waiting -
