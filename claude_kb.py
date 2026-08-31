@@ -7,6 +7,7 @@ Python standard library only (sqlite3 + json). Reads the Claude data export
 Usage:
     python claude_kb.py build                     # full clean-slate rebuild
     python claude_kb.py update <export-dir|.zip>  # incremental upsert (never wipes)
+    python claude_kb.py update-web <file.json...> # upsert web captures (never shrinks)
     python claude_kb.py search "TERMS"
     python claude_kb.py mcp                        # stdio MCP server
     python claude_kb.py http                       # localhost streamable-http MCP
@@ -482,6 +483,114 @@ def update(export_path, authoritative=True):
             tmp.cleanup()
 
 
+WEB_FORMAT = "claude-kb-web-export"
+WEB_FORMAT_VERSION = 1
+
+
+def _reject(path, reason):
+    """Report a refused capture in one parseable line, and return None.
+
+    The caller logs this reason. A reason that is computed and then dropped
+    before it reaches ingest.log leaves a 06:00 rejection undiagnosable after
+    the fact, which is the silent-stall shape this codebase keeps hitting.
+    """
+    print(f"REJECTED {os.path.basename(path)}: {reason}")
+    return None
+
+
+def _read_web_export(path):
+    """Parse one claude-kb-web-export envelope. Returns a conversation dict or None.
+
+    The envelope wraps the conversation object verbatim, because the shape the
+    web app returns is a SUPERSET of the shape the official export ships: same
+    uuid/name/updated_at, same chat_messages carrying sender/text/content/
+    created_at/parent_message_uuid. So the wrapped object feeds straight into
+    _conv_messages with no translation, and - critically - it is counted by the
+    same normalizer the export is counted by, which is what makes the shrink
+    guard's comparison meaningful.
+
+    Rejects rather than half-ingests. A capture that cannot be trusted is worth
+    less than no capture: it would land as a PARTIAL at best, and at worst as a
+    plausible-looking replacement.
+    """
+    try:
+        obj = load_json(path)
+    except (OSError, ValueError, UnicodeDecodeError) as e:
+        return _reject(path, f"unreadable ({e})")
+    if not isinstance(obj, dict):
+        return _reject(path, "not a JSON object")
+
+    fmt = (obj.get("format") or "").strip()
+    if fmt != WEB_FORMAT:
+        return _reject(path, f"unknown format {fmt!r}")
+    try:
+        ver = int(obj.get("format_version") or 0)
+    except (TypeError, ValueError):
+        ver = 0
+    if ver != WEB_FORMAT_VERSION:
+        # Refuse a future envelope rather than mis-parse it.
+        return _reject(path, f"format_version {obj.get('format_version')!r}"
+                             f" (this build reads {WEB_FORMAT_VERSION})")
+
+    conv = obj.get("conversation")
+    if not isinstance(conv, dict) or not (conv.get("uuid") or "").strip():
+        return _reject(path, "no conversation.uuid")
+
+    msgs = conv.get("chat_messages")
+    if not isinstance(msgs, list) or not msgs:
+        return _reject(path, "no chat_messages")
+
+    # A truncated message means the source returned incomplete text: the count
+    # matches but the content does not, so it would churn UPDATED forever while
+    # degrading what is indexed. Refuse the whole capture.
+    n_trunc = sum(1 for m in msgs if isinstance(m, dict) and m.get("truncated"))
+    if n_trunc:
+        return _reject(path, f"{n_trunc} truncated message(s)")
+
+    if not _conv_messages(conv):
+        return _reject(path, "no indexable messages")
+    return conv
+
+
+def update_web(paths):
+    """Upsert web captures. NEVER authoritative - see _should_replace.
+
+    Returns (ok, ingested_paths). A file that fails validation is not ingested
+    and not reported as ingested, so the caller leaves it where it is.
+    """
+    conns = []
+    good = []
+    for p in paths:
+        conv = _read_web_export(p)
+        if conv is not None:
+            conns.append(conv)
+            good.append(p)
+
+    conn = sqlite3.connect(DB)
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+        _ensure_schema(conn)
+        _backfill_tracking(conn)
+        c_new, c_upd, c_skip, c_part = upsert_conversations(
+            conn, conns, authoritative=False)
+        conn.commit()
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        total = conn.execute("SELECT count(*) FROM docs").fetchone()[0]
+    finally:
+        conn.close()
+    write_gz()
+
+    rejected = len(paths) - len(good)
+    print("\n=== WEB CAPTURE UPDATE (upsert; nothing wiped) ===")
+    print(f"  files            : {len(paths)} ({rejected} rejected)")
+    print(f"  chats   NEW={c_new}  UPDATED={c_upd}  SKIPPED={c_skip}"
+          f"  PARTIAL={c_part}")
+    print(f"  total rows        : {total}")
+    print(f"SUMMARY NEW={c_new} UPDATED={c_upd} SKIPPED={c_skip} "
+          f"PARTIAL={c_part} REJECTED={rejected} ROWS={total}")
+    return True, good
+
+
 def write_gz():
     """Write claude_kb.db.gz from the current DB (read-only source)."""
     dst = DB + ".gz"
@@ -633,6 +742,12 @@ if __name__ == "__main__":
         build()
     elif len(sys.argv) >= 3 and sys.argv[1] == "update":
         update(sys.argv[2])
+    elif len(sys.argv) >= 3 and sys.argv[1] == "update-web":
+        ok, ingested = update_web(sys.argv[2:])
+        # Name what was actually ingested so the caller archives only those.
+        for p in ingested:
+            print(f"INGESTED {p}")
+        sys.exit(0 if ok else 1)
     elif len(sys.argv) >= 3 and sys.argv[1] == "search":
         search(" ".join(sys.argv[2:]))
     elif len(sys.argv) >= 2 and sys.argv[1] == "mcp":

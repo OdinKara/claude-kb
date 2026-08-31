@@ -203,6 +203,45 @@ guard cannot prove the incoming version is not a shrink, it refuses.
 `SUMMARY` gained a `PARTIAL=` field. `kb_ingest.py` matches on the `SUMMARY`
 prefix, so appending fields is safe; reordering or renaming the prefix is not.
 
+## Web captures
+
+`incoming/claude-web-*.json` is a single-conversation envelope
+(`format=claude-kb-web-export`, `format_version=1`) wrapping the conversation
+object verbatim. `kb_ingest.py` picks these up alongside the export zips;
+`claude_kb.py update-web <file...>` ingests them, always with
+`authoritative=False`.
+
+The envelope wraps rather than reshapes because the web app's conversation
+object is a SUPERSET of the export's: same `uuid`/`name`/`updated_at`, same
+`chat_messages` carrying `sender`/`text`/`content`/`created_at`/
+`parent_message_uuid`, plus extras the export omits. So the wrapped object goes
+straight into `_conv_messages` untranslated - which is also what guarantees the
+capture is counted by the same normalizer the export is, without which the
+shrink guard above compares two numbers that do not mean the same thing.
+
+A capture is refused outright rather than half-ingested, because a capture that
+cannot be trusted is worth less than no capture at all: wrong format, a
+`format_version` this build does not read, no `conversation.uuid`, no
+`chat_messages`, no indexable messages, or ANY message flagged `truncated`. A
+truncated message means the source returned incomplete text - the count matches
+but the content does not, so it would churn `UPDATED` forever while degrading
+what is indexed.
+
+Two disposals, deliberately different:
+
+    PARTIAL   accepted, ingested as a no-op, ARCHIVED. A conversation only
+              grows in the index, so a capture shorter than what is stored will
+              be shorter forever; leaving it to retry accomplishes nothing.
+
+    REJECTED  never ingested, LEFT in incoming/. It is a fault to look at, not
+              a file to quietly file away.
+
+The reader emits one `REJECTED <file>: <reason>` line per refusal and
+`kb_ingest.py` folds those reasons into its single log entry. A reason that is
+computed and then dropped before reaching `ingest.log` leaves a 06:00 rejection
+undiagnosable the morning after - the same silent-stall shape as the eleven-day
+export stall, in a new place.
+
 ## The MCP extension is generated, not checked in
 
 The repo holds one `claude_kb.py`. `.mcpb` requires the entry point inside the
