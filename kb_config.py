@@ -51,6 +51,12 @@ _SPEC = {
     "export_dir": ("CLAUDE_KB_EXPORT_DIR", _AUTO),
     "http_port":  ("CLAUDE_KB_HTTP_PORT",  8760),
     "author":     ("CLAUDE_KB_AUTHOR",     "Unknown"),
+    # Where the browser extension is LOADED FROM in the browser. A setting
+    # rather than a constant because the path is load-bearing: an unpacked
+    # extension's ID is derived from its absolute path, and that ID is
+    # registered with the native messaging host. Moving the directory
+    # silently changes the ID and breaks native messaging.
+    "extension_dir": ("CLAUDE_KB_EXTENSION_DIR", _AUTO),
 }
 
 
@@ -114,6 +120,11 @@ def _coerce(key, val):
 def _derive(key):
     if key == "downloads":
         return os.path.join(os.path.expanduser("~"), "Downloads")
+    if key == "extension_dir":
+        # Derived from the home directory rather than written out in full:
+        # this repo is public and its own convention keeps real user paths
+        # out of it (config.example.json uses a placeholder user).
+        return os.path.join(os.path.expanduser("~"), "Claude KB", "extension")
     if key == "python":
         return sys.executable
     if key == "browser":

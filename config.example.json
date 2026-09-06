@@ -28,5 +28,8 @@
   "http_port": 8760,
 
   "_author": "Name written into the generated MCP extension manifest by build_extension.py. Default: Unknown. Env: CLAUDE_KB_AUTHOR",
-  "author": "Your Name"
+  "author": "Your Name",
+
+  "_extension_dir": "Directory the BROWSER extension is loaded from in Chrome/Edge - the deploy target of deploy_extension.py. Default: ~/Claude KB/extension. THIS PATH IS LOAD-BEARING: an unpacked extension's ID is derived from its absolute path, and that ID is registered with the native messaging host, so moving this directory silently breaks native messaging until install-host.ps1 is re-run with the new ID. deploy_extension.py refuses to create it. Env: CLAUDE_KB_EXTENSION_DIR",
+  "extension_dir": "C:\\Users\\you\\Claude KB\\extension"
 }
