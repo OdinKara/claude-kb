@@ -1,5 +1,8 @@
 /* Popup. Its one real job is to never let a held-back or refused capture read
  * as a success - the host already reports INGESTED, PARTIAL, SKIPPED and
+ * REJECTED distinctly, so this only has to stop conflating them. PARTIAL is
+ * shown to the user as "held back": the host's token names the guard that
+ * fired, not what happened to their data.
  * REJECTED distinctly, so this only has to stop conflating them. */
 
 const hostEl = document.getElementById("host");
@@ -130,7 +133,7 @@ function show(reply) {
     case "partial":
       render(
         "warn",
-        "Held back - PARTIAL",
+        "Held back - shorter than indexed",
         (reply.message || "") + cap,
         "The capture has fewer messages than the copy already indexed, so it " +
           "was not allowed to replace it. Nothing was lost. This is expected " +
@@ -299,7 +302,7 @@ function renderPerConversation(report) {
     o.className =
       "o " +
       (head === "INGESTED" || head === "SAVED" ? "o-ing"
-        : head === "PARTIAL" ? "o-par"
+        : head === "HELD BACK" ? "o-par"
         : head === "SKIPPED" ? "o-skp"
         : "o-rej");
     o.textContent = c.outcome;
@@ -338,7 +341,8 @@ function showRun(report) {
   const parts =
     report.status === "saved"
       ? [`${saved} written to incoming, not ingested`]
-      : [`${ing} ingested`, `${par} PARTIAL`, `${skp} unchanged`, `${rej} refused`];
+      : [`${ing} ingested`, `${par} held back`, `${skp} unchanged`,
+         `${rej} refused`];
   if (notCaptured) parts.push(`${notCaptured} not captured`);
   const head = `${report.selected} selected: ${parts.join(", ")}`;
 

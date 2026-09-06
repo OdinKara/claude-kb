@@ -371,6 +371,34 @@ file-writing primitive: even given the other two conditions, a caller cannot
 land a file the ingest path does not already expect to find. Do not relax it for
 convenience.
 
+### A malformed length prefix is safe only because the loop stops
+
+`read_msg()` reads the uint32 length prefix and then refuses anything outside
+`0 < n <= MAX_MESSAGE` (50 MB):
+
+    n = struct.unpack("<I", raw)[0]
+    if n <= 0 or n > MAX_MESSAGE:
+        return None          # returns WITHOUT consuming the n-byte body
+
+It returns **without consuming the body**. That is safe today for exactly one
+reason: `main()` treats `None` as end-of-stream and returns, so the unread bytes
+die with the process and the extension sees a clean "host did not answer".
+
+**Changing that early return to `continue` would be a real bug**, and a quiet
+one: the next `read_msg()` would start reading in the middle of the previous
+body, take four arbitrary bytes as a length prefix, and either block waiting for
+bytes that never come or parse garbage. If the loop ever needs to survive an
+oversized message, it must first `sys.stdin.buffer.read(n)` and discard it -
+skipping the body is not optional.
+
+Headroom today is comfortable, so this is a sharp edge rather than a live
+defect: the largest capture on record is ~796 KB, and a full bulk run sends at
+most `CAPTURE_MAX_PER_RUN` (25) files in ONE native message, so the worst case
+measured is 25 x 796 KB = **19.9 MB against the 50 MB cap**. The failure mode if
+that ceiling is ever crossed is loud (the host exits, the popup reports the host
+did not answer), not silent - but the ceiling is worth remembering before
+raising the per-run cap.
+
 ### It always answers
 
 A native host that exits without replying gives the extension a bare
@@ -537,6 +565,28 @@ scrape that looked complete would be held back forever. There is no version of
 ships the whole tree and a pruned capture would look short. The second because
 those blocks are dropped by `flatten_text` anyway, so requesting them only adds
 shape divergence between what is captured and what is indexed.
+
+### The -N filename suffix identifies a BULK capture
+
+`captureOne()` takes an optional `seq`. The single-capture button does not pass
+it; `captureMany()` passes the loop index. So the filename says which path
+produced a capture:
+
+    claude-web-YYYYMMDD-HHMMSS.json      captureActive()  - the on-page button
+    claude-web-YYYYMMDD-HHMMSS-<n>.json  captureMany()    - the bulk list path
+
+The suffix exists because a run captures several conversations inside the same
+second and the timestamp alone is not unique. But it doubles as a **forensic
+marker**, and that turned out to matter: when a bulk capture was reported as
+truncated, the suffix on the archived files in `processed/` was what established
+which path had actually produced each capture. It showed the conversation
+offered as proof that the on-page path was complete had in fact been captured by
+the bulk path - and that the live index's message count matched that bulk
+capture exactly. Without the suffix, the two paths would be indistinguishable
+after the fact and that hypothesis could not have been tested at all.
+
+Keep it. A filename that records which code path wrote it costs nothing and is
+the difference between measuring and guessing.
 
 ### Listing and bulk capture
 

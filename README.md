@@ -711,7 +711,7 @@ refused must never read as a success.
 | **Ingested** | Indexed as new or updated. | Yes |
 | **Saved (not ingested)** | Written to `incoming/`, waiting for a run. From *Capture only*. | Not yet |
 | **Already indexed, unchanged** | Identical to what is stored. | No, and nothing was lost |
-| **Held back - PARTIAL** | Fewer messages than the copy already indexed, so it was not allowed to replace it. Normal when an export already covers this chat. | No, and nothing was lost |
+| **Held back - shorter than indexed** | The capture had fewer messages than the copy already indexed, so the shrink guard kept the fuller copy. Normal when an export already covers this chat. **This is the guard working, not a truncated capture.** Reported by `claude_kb.py` and `kb_ingest.py` as `PARTIAL`. | No, and nothing was lost |
 | **Partly ingested** | Several captures, mixed outcomes. Refused files stay in `incoming/`. | Some |
 | **Refused** | Failed validation. The file stays in `incoming/` so you can look at it. | No |
 
@@ -743,7 +743,10 @@ replace a real conversation with nothing.
 - A conversation is only shortened by a writer entitled to shorten it. The
   official export is a complete snapshot and may; anything else must bring at
   least as many messages as are already indexed, or the update is reported as
-  `PARTIAL` and the fuller version is kept. See `DEV.md`.
+  `PARTIAL` and the fuller version is kept. See `DEV.md`. The browser
+  extension shows that outcome as **held back - shorter than indexed**:
+  `PARTIAL` names the guard that fired, which reads to a human like the
+  capture itself was cut short, and it was not.
 - FTS5 is used when SQLite has it, with an automatic fall-back to FTS4.
 - `build` is a clean-slate rebuild that **deletes and recreates** the database.
   You almost never want it; `update` is the normal path.

@@ -244,7 +244,12 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         byFile[r.name] = "REFUSED: " + (r.reason || "write guard");
       }
       for (const n of reply.ingested || []) byFile[n] = "INGESTED";
-      for (const n of reply.partial || []) byFile[n] = "PARTIAL";
+      // "PARTIAL" is the host's token, not a label a human should read: it
+      // says nothing about what happened and reads like a truncated capture.
+      // What actually happened is that the capture was SHORTER than what is
+      // already indexed, so the shrink guard kept the fuller copy.
+      for (const n of reply.partial || [])
+        byFile[n] = "HELD BACK: shorter than indexed, nothing lost";
       for (const n of reply.skipped || []) byFile[n] = "SKIPPED";
       for (const r of reply.rejected || []) byFile[r.name] = "REJECTED: " + r.reason;
 
