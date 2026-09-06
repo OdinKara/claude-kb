@@ -41,6 +41,40 @@ body {
 
 h1 { font-size: 14px; margin: 0 0 10px; }
 
+/* Header row. The heart is positioned ABSOLUTELY rather than laid out in flow:
+   the button is 34px tall against a 20px title line, so putting it in the flow
+   would grow the header and push every control below it down. Out of flow, the
+   header keeps its exact original height and nothing else moves by a pixel. */
+.hdr { position: relative; }
+
+/* Donate heart - values taken from ArrDeck's SponsorHeart.tsx, not eyeballed:
+   16px glyph, 8px padding and a 1px border (34px square), 10px radius
+   (--radius-sm), transparent background, #e5484d (SPONSOR_RED).
+   The ONE deviation is the border colour: ArrDeck hardcodes #2f333c because it
+   is dark-only, and that reads as a harsh near-black box on this popup's light
+   theme, so the border follows the popup's own --line token in both themes. */
+#support-heart {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  /* The generic `button` rule sets flex:1, white-on-accent and a 6px radius -
+     every one of those has to be overridden here or the heart becomes a blue
+     pill that fights the header. */
+  flex: none;
+  width: auto;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: transparent;
+  color: #e5484d;
+  line-height: 0;
+  cursor: pointer;
+}
+#support-heart:hover { border-color: #e5484d; }
+#support-heart:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
 .host {
   font-size: 12px;
   color: var(--muted);

@@ -7,6 +7,21 @@ const outEl = document.getElementById("out");
 const btnIngest = document.getElementById("ingest");
 const btnSave = document.getElementById("save");
 
+/* Donate heart. Opens the tip jar in a real tab: chrome.tabs.create is the MV3
+ * path (the extension already holds the "tabs" permission), with window.open as
+ * a fallback so the control still works if that ever goes away. The handler
+ * lives here rather than inline in popup.html because MV3's CSP forbids inline
+ * script. It is the ONLY donate entry point in the popup and does nothing until
+ * it is deliberately clicked. */
+const DONATE_URL = "https://donate.grimnirworks.com";
+document.getElementById("support-heart").addEventListener("click", () => {
+  if (chrome.tabs && chrome.tabs.create) {
+    chrome.tabs.create({ url: DONATE_URL });
+  } else {
+    window.open(DONATE_URL, "_blank", "noopener");
+  }
+});
+
 /* Why a capture never happened, in the caller's terms. The kind matters: six
  * months from now "auth" and "shape" send you to completely different places. */
 const CAPTURE_REASONS = {

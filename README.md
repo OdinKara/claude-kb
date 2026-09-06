@@ -751,6 +751,13 @@ replace a real conversation with nothing.
 See `DEV.md` for architecture, and for two automation dead ends documented with
 their evidence so they do not get rebuilt.
 
+## Support
+
+Claude KB is free and MIT-licensed, and it stays that way - there is no paid
+tier and nothing is held back. If it is useful to you, there is a tip jar at
+[donate.grimnirworks.com](https://donate.grimnirworks.com). Bug reports and PRs
+are worth just as much.
+
 ## License
 
 MIT - see `LICENSE`.
