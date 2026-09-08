@@ -342,6 +342,15 @@ The whole path, start to finish. Steps 1-4 are covered under
 After step 6, restart Desktop and ask it something that should hit your history.
 If `kb_search` does not appear in a fresh session, the extension is not loaded.
 
+![The Claude KB extension enabled in Claude Desktop, with kb_search and kb_get_conversation listed under tool permissions](docs/Claude-KB-Extension.png)
+
+*This is the state to confirm before moving on: the extension **Enabled**, and
+both tools - `kb_search` and `kb_get_conversation` - registered under tool
+permissions and allowed to run. If the extension is listed but the two tools are
+not, the manifest was installed but the server did not start; if the tools are
+present but set to ask or deny, Claude will not be able to reach your index
+until you permit them.*
+
 ### What the build step produces
 
 ```bash
