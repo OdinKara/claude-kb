@@ -653,6 +653,14 @@ every branched conversation look short to the shrink guard.
 **Load chat list** pages through your conversations and shows them most recent
 first, each labelled against what the KB already holds:
 
+![The capture popup after Load chat list, showing each conversation labelled new, grown or indexed](docs/Claude-KB-ChatList.png)
+
+*Chat titles are covered in this screenshot. That is the point rather than an
+apology for it: the titles are the most identifying thing on the screen, and
+Claude KB never transmits them anywhere - the list is fetched by your own
+browser from claude.ai's own API, labelled against your local index, and every
+capture is written to your own disk. Nothing about this list leaves the machine.*
+
 | Label | Meaning |
 |---|---|
 | **new** | not indexed at all |
