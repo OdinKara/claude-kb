@@ -636,6 +636,13 @@ Open a conversation on claude.ai and click the extension.
 - **Capture + Ingest** - write the capture and index it immediately.
 - **Capture only** - write it to `incoming/` and leave it for the scheduled run.
 
+![The capture popup after a single Capture + Ingest run](docs/Claude-KB-CaptureIngest.png)
+
+*One conversation captured and indexed. The popup reports what actually
+happened - `1 updated`, and the message count it took - rather than a generic
+success. The path it writes to is shown up front so you always know where a
+capture lands; the username is covered here for the screenshot.*
+
 The capture is taken with `tree=True`, which returns the whole message tree
 including branches you regenerated away from. That is deliberate: the official
 export ships the whole tree too, and capturing only the active path would make
