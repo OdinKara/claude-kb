@@ -62,6 +62,30 @@ Check this before every commit, not from memory. A repo-local `pre-commit` hook
 runs the check when one is installed; when it is not, do the sweep by hand and
 say you did.
 
+**Screenshots: the rule above still holds, with one narrow exception.** The
+prohibition is unchanged for prose, code, examples and documentation - a
+usage-revealing date or an absolute corpus count written into any of those is
+still out, with no exception at all.
+
+A screenshot may show a usage date or an absolute corpus count **only when the maintainer
+has reviewed that specific image and said so.** Not screenshots in general: this
+image, reviewed, approved. The reasoning is that a screenshot is a deliberate
+publication decision about a picture he has looked at, whereas prose accumulates
+these details by accident, which is what the rule was written to catch.
+
+Approved images:
+
+| Image | Approved | Shows |
+|---|---|---|
+| `docs/Claude-KB-ChatList.png` | 2026-09-08 | Chat titles masked. Shows a corpus count and dated rows - reviewed and approved as publishable. |
+
+**This list is the whole of the exemption.** An image not on it gets no
+exemption, and adding a row is the maintainer's decision, never one to infer from the
+fact that a similar image was approved before. If a new screenshot would show a
+date or a count, stop and ask - the answer may well be yes, but it has to be
+asked. Do not mask, crop or edit a supplied screenshot on your own initiative
+either; ask, because the redaction someone chose is itself a decision.
+
 ## What you cannot do, and must hand over
 
 Stop and ask rather than claiming these are done or pretending to do them:
