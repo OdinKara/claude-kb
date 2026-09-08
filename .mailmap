@@ -1,0 +1,13 @@
+# Historical commits were authored under a personal name. Attribution for this
+# work is GrimnirWorks; the studio contact is niamain@gmail.com.
+#
+# This affects DISPLAY ONLY. The raw commit objects still carry the original
+# author and committer values, readable with `git log --no-mailmap`.
+#
+# Covers the studio address, the transposed-address typo (naimain@) and the
+# GitHub noreply address. One historical address is deliberately NOT mapped
+# here: writing it into a tracked file would publish it, which is the opposite
+# of the intent.
+GrimnirWorks <niamain@gmail.com> <niamain@gmail.com>
+GrimnirWorks <niamain@gmail.com> <niamain@gmail.com>
+GrimnirWorks <niamain@gmail.com> <271621321+OdinKara@users.noreply.github.com>
